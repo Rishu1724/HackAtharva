@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "Smart Transport Safety",
+    "slug": "smart-transport-safety",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.hackatharva.smarttransport",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We need your location to track your trip and ensure your safety.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "We need your location to track your trip and send alerts to your trusted contacts.",
+        "NSCameraUsageDescription": "Camera is used for emergency surveillance and incident recording.",
+        "UIBackgroundModes": ["location"]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.hackatharva.smarttransport",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_CONTACTS"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyAE5FacVGW-mQqZfdq1w0DpV04-AFQ4dtc"
+        }
+      }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Smart Transport Safety to access your camera for emergency recording."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Smart Transport Safety to use your location for trip tracking and safety alerts.",
+          "locationAlwaysPermission": "Allow Smart Transport Safety to track your location in the background during active trips.",
+          "locationWhenInUsePermission": "Allow Smart Transport Safety to use your location for trip tracking."
+        }
+      ]
+    ]
+    ,"extra": {
+      "backendUrl": "http://10.38.160.79:8000"
+    }
+  }
+}
