@@ -1,21 +1,21 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, StyleSheet, View } from 'react-native';
 import { CameraType, CameraView, useCameraPermissions } from 'expo-camera';
 import { Button, Card, Text, Chip } from 'react-native-paper';
-import Constants from 'expo-constants';
 import { auth } from '../../config/firebase';
 import CameraOverlay from '../../modules/CameraModule/CameraOverlay';
 import { useCameraStream } from '../../modules/CameraModule/useCameraStream';
 import DriverLocationMap from '../../modules/GPSModule/DriverLocationMap';
 import { useDriverLocation } from '../../modules/GPSModule/useDriverLocation';
+import NotificationService from '../../services/NotificationService';
+import { getBackendUrl } from '../../utils/backendUrl';
 
-const BACKEND_URL =
-  (Constants.expoConfig?.extra?.backendUrl as string | undefined) ??
-  'http://10.0.2.2:8000';
+const BACKEND_URL = getBackendUrl();
 
 export default function DriverMonitoringScreen() {
   const [facing, setFacing] = useState<CameraType>('front');
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const lastAlertAtRef = useRef(0);
 
   const driverId = useMemo(() => auth.currentUser?.uid ?? 'demo-driver', []);
 
@@ -45,6 +45,20 @@ export default function DriverMonitoringScreen() {
   });
 
   const monitoringOn = isStreaming && isTracking;
+
+  useEffect(() => {
+    if (flag === 'NORMAL') {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastAlertAtRef.current < 60000) {
+      return;
+    }
+
+    lastAlertAtRef.current = now;
+    NotificationService.notifyDriverAlert(driverId, flag);
+  }, [driverId, flag]);
 
   const handleMonitoringToggle = async () => {
     try {

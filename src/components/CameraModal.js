@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, StyleSheet, Alert, TouchableOpacity, Platform } from 'react-native';
 import { Text, Button, IconButton } from 'react-native-paper';
-import { Camera, CameraType } from 'expo-camera';
+import { CameraView, Camera } from 'expo-camera';
 import { Video } from 'expo-av';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -10,7 +10,7 @@ import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
 
 export default function CameraModal({ visible, onClose, tripId }) {
   const [hasPermission, setHasPermission] = useState(null);
-  const [cameraType, setCameraType] = useState(CameraType.back);
+  const [cameraType, setCameraType] = useState('back');
   const [isRecording, setIsRecording] = useState(false);
   const [recordedVideo, setRecordedVideo] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -33,7 +33,6 @@ export default function CameraModal({ visible, onClose, tripId }) {
         setIsRecording(true);
         const video = await cameraRef.current.recordAsync({
           maxDuration: 300, // 5 minutes max
-          quality: Camera.Constants.VideoQuality['720p'],
         });
         setRecordedVideo(video.uri);
         setIsRecording(false);
@@ -173,10 +172,10 @@ export default function CameraModal({ visible, onClose, tripId }) {
     <View style={styles.container}>
       {!recordedVideo ? (
         <>
-          <Camera
+          <CameraView
             ref={cameraRef}
             style={styles.camera}
-            type={cameraType}
+            facing={cameraType}
           >
             <View style={styles.cameraOverlay}>
               <View style={styles.topBar}>
@@ -193,9 +192,7 @@ export default function CameraModal({ visible, onClose, tripId }) {
                   size={30}
                   onPress={() =>
                     setCameraType(
-                      cameraType === CameraType.back
-                        ? CameraType.front
-                        : CameraType.back
+                      cameraType === 'back' ? 'front' : 'back'
                     )
                   }
                 />
@@ -235,7 +232,7 @@ export default function CameraModal({ visible, onClose, tripId }) {
                 </View>
               )}
             </View>
-          </Camera>
+          </CameraView>
         </>
       ) : (
         <View style={styles.previewContainer}>

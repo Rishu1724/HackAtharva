@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, Alert, Platform } from 'react-native';
+import { View, StyleSheet, Alert } from 'react-native';
 import { Card, Button, Text, ActivityIndicator } from 'react-native-paper';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { useTranslation } from 'react-i18next';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 export default function RoleSelectionScreen({ navigation }) {
   const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
+  const { t } = useTranslation();
 
   useEffect(() => {
     fetchUserRole();
@@ -15,7 +18,7 @@ export default function RoleSelectionScreen({ navigation }) {
   const fetchUserRole = async () => {
     try {
       if (!auth.currentUser?.uid) {
-        Alert.alert('Session Error', 'Please login again.');
+        Alert.alert(t('errors.generic'), t('errors.sessionExpired'));
         navigation.replace('Login');
         return;
       }
@@ -26,7 +29,7 @@ export default function RoleSelectionScreen({ navigation }) {
 
       if (userDoc.exists()) {
         const incomingRole = userDoc.data().role;
-        if (incomingRole === 'driver' || incomingRole === 'admin' || incomingRole === 'passenger') {
+        if (incomingRole === 'driver' || incomingRole === 'passenger') {
           role = incomingRole;
         }
       } else {
@@ -40,12 +43,6 @@ export default function RoleSelectionScreen({ navigation }) {
         });
       }
 
-      // Admin flow is intentionally web-only.
-      if (role === 'admin' && Platform.OS !== 'web') {
-        role = 'passenger';
-        Alert.alert('Info', 'Admin panel is web-only. Opening passenger app on mobile.');
-      }
-
       setUserRole(role);
 
       // Auto-navigate based on role
@@ -53,7 +50,7 @@ export default function RoleSelectionScreen({ navigation }) {
         navigateToRole(role);
       }, 1000);
     } catch (error) {
-      Alert.alert('Error', 'Failed to fetch user data');
+      Alert.alert(t('errors.generic'), t('errors.fetchUserFailed'));
     } finally {
       setLoading(false);
     }
@@ -67,15 +64,8 @@ export default function RoleSelectionScreen({ navigation }) {
       case 'driver':
         navigation.replace('DriverMain');
         break;
-      case 'admin':
-        if (Platform.OS === 'web') {
-          navigation.replace('AdminDashboard');
-        } else {
-          navigation.replace('PassengerMain');
-        }
-        break;
       default:
-        Alert.alert('Error', 'Invalid role');
+        navigation.replace('PassengerMain');
     }
   };
 
@@ -83,7 +73,7 @@ export default function RoleSelectionScreen({ navigation }) {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="large" />
-        <Text style={styles.loadingText}>Loading...</Text>
+        <Text style={styles.loadingText}>{t('roleSelection.loading')}</Text>
       </View>
     );
   }
@@ -92,11 +82,12 @@ export default function RoleSelectionScreen({ navigation }) {
     <View style={styles.container}>
       <Card style={styles.card}>
         <Card.Content>
+          <LanguageSwitcher />
           <Text variant="headlineMedium" style={styles.title}>
-            Welcome!
+            {t('roleSelection.welcome')}
           </Text>
           <Text variant="bodyMedium" style={styles.subtitle}>
-            You are registered as: {userRole || 'passenger'}
+            {t('roleSelection.registeredAs')} {userRole || t('roles.passenger')}
           </Text>
 
           <Button
@@ -104,7 +95,7 @@ export default function RoleSelectionScreen({ navigation }) {
             onPress={() => navigateToRole(userRole || 'passenger')}
             style={styles.button}
           >
-            Continue
+            {t('roleSelection.continue')}
           </Button>
         </Card.Content>
       </Card>

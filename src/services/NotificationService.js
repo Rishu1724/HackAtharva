@@ -2,6 +2,7 @@ import { collection, addDoc, query, where, getDocs, doc, getDoc, setDoc } from '
 import Constants from 'expo-constants';
 import { db } from '../config/firebase';
 import * as Notifications from 'expo-notifications';
+import { getBackendUrl } from '../utils/backendUrl';
 
 // Configure notification handler
 Notifications.setNotificationHandler({
@@ -28,8 +29,12 @@ class NotificationService {
         return null;
       }
 
+      const projectId =
+        Constants.expoConfig?.extra?.eas?.projectId ||
+        Constants.expoConfig?.extra?.projectId;
+
       // Get push token
-      const token = (await Notifications.getExpoPushTokenAsync()).data;
+      const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
       console.log('Push token:', token);
 
       if (userId) {
@@ -42,13 +47,16 @@ class NotificationService {
 
       return token;
     } catch (error) {
-      console.error('Error initializing notifications:', error);
+      console.warn(
+        'Notifications not ready. Configure FCM credentials for Android push.',
+        error
+      );
       return null;
     }
   }
 
   async sendPushToToken(token, title, body, data = {}) {
-    const backendUrl = Constants.expoConfig?.extra?.backendUrl || '';
+    const backendUrl = getBackendUrl();
     if (!backendUrl) {
       console.warn('backendUrl missing in app.json extra');
       return;
@@ -120,8 +128,8 @@ class NotificationService {
       if (userData.expoPushToken) {
         await this.sendPushToToken(
           userData.expoPushToken,
-          '⚠️ Route Deviation Detected',
-          'The vehicle has deviated from the expected route. Your contacts have been notified.',
+          '⚠️ Route Alert',
+          'Driver is off the planned route. Please check with the driver immediately.',
           { tripId: tripId, type: 'route_deviation' }
         );
       }
@@ -131,7 +139,7 @@ class NotificationService {
         const notifications = userData.trustedContacts.map((contact) => ({
           recipientName: contact.name,
           recipientPhone: contact.phone,
-          message: `⚠️ ALERT: ${userData.name}'s vehicle has deviated from the route. Location: ${location.latitude}, ${location.longitude}`,
+          message: `⚠️ Route alert for ${userData.name}. Driver is off the planned route. Location: ${location.latitude}, ${location.longitude}.`,
           type: 'route_deviation',
           tripId: tripId,
           timestamp: new Date().toISOString(),
@@ -160,12 +168,128 @@ class NotificationService {
         await this.sendPushToToken(
           userData.expoPushToken,
           '⚠️ Speed Alert',
-          `Vehicle speed is ${speed} km/h. Please ask the driver to slow down.`,
+          `Driver speed is ${speed} km/h. Please ask the driver to slow down.`,
           { tripId: tripId, type: 'speed_violation', speed: speed }
         );
       }
     } catch (error) {
       console.error('Error notifying speed violation:', error);
+    }
+  }
+
+  async notifyDriverAlert(driverId, flag) {
+    try {
+      const passengersSnapshot = await getDocs(
+        query(collection(db, 'users'), where('role', '==', 'passenger'))
+      );
+
+      const tokens = passengersSnapshot.docs
+        .map((doc) => doc.data().expoPushToken)
+        .filter(Boolean);
+
+      const title = flag === 'DROWSY' ? '⚠️ Driver Drowsiness Alert' : '⚠️ Driver Distraction Alert';
+      const body =
+        flag === 'DROWSY'
+          ? 'Driver appears drowsy. Stay alert and be ready to use SOS.'
+          : 'Driver appears distracted. Stay alert and be ready to use SOS.';
+
+      await Promise.all(
+        tokens.map((token) =>
+          this.sendPushToToken(token, title, body, { driverId, type: 'driver_alert', flag })
+        )
+      );
+    } catch (error) {
+      console.error('Error notifying driver alert:', error);
+    }
+  }
+
+  async notifyRouteDeviationBroadcast(driverId, location, distanceMeters) {
+    try {
+      const passengersSnapshot = await getDocs(
+        query(collection(db, 'users'), where('role', '==', 'passenger'))
+      );
+
+      const tokens = passengersSnapshot.docs
+        .map((doc) => doc.data().expoPushToken)
+        .filter(Boolean);
+
+      const title = '⚠️ Route Change Alert';
+      const body = `Driver is off the planned route by ${distanceMeters}m. Please stay alert.`;
+
+      await Promise.all(
+        tokens.map((token) =>
+          this.sendPushToToken(token, title, body, {
+            driverId,
+            type: 'route_deviation',
+            location,
+            distance: distanceMeters,
+          })
+        )
+      );
+    } catch (error) {
+      console.error('Error broadcasting route deviation:', error);
+    }
+  }
+
+  async notifyPassengersForDriver(driverId, title, body, data = {}) {
+    try {
+      const tripsSnapshot = await getDocs(
+        query(
+          collection(db, 'trips'),
+          where('driverId', '==', driverId),
+          where('status', '==', 'active')
+        )
+      );
+
+      if (tripsSnapshot.empty) return;
+
+      const userIds = tripsSnapshot.docs
+        .map((doc) => doc.data().userId)
+        .filter(Boolean);
+
+      for (const userId of userIds) {
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        const userData = userDoc.data();
+        if (userData?.expoPushToken) {
+          await this.sendPushToToken(userData.expoPushToken, title, body, {
+            driverId,
+            ...data,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error notifying passengers for driver:', error);
+    }
+  }
+
+  async recordDriverIncident(driverId, vehicleNumber, flag, action, severity) {
+    try {
+      const alertDoc = {
+        driverId,
+        vehicleNumber: vehicleNumber || null,
+        flag,
+        action,
+        severity,
+        timestamp: new Date().toISOString(),
+      };
+
+      await addDoc(collection(db, 'driverAlerts'), alertDoc);
+
+      const title = severity === 'HIGH' ? '🚨 Critical Driver Alert' : '⚠️ Driver Alert';
+      const body = action ||
+        (flag === 'DROWSY'
+          ? 'Driver appears drowsy. Please stay alert.'
+          : 'Driver appears distracted. Please stay alert.');
+
+      await this.notifyPassengersForDriver(driverId, title, body, {
+        type: 'driver_behavior',
+        flag,
+        severity,
+        action,
+        vehicleNumber,
+      });
+    } catch (error) {
+      console.error('Error recording driver incident:', error);
     }
   }
 
@@ -184,7 +308,7 @@ class NotificationService {
         await this.sendPushToToken(
           userData.expoPushToken,
           '⚠️ Unusual Stop Detected',
-          `Vehicle has been stopped for ${duration} minutes. Are you okay?`,
+          `Vehicle has been stopped for ${duration} minutes at an unexpected location. Are you okay?`,
           { tripId: tripId, type: 'long_stop' }
         );
       }
@@ -194,7 +318,7 @@ class NotificationService {
         const notifications = userData.trustedContacts.map((contact) => ({
           recipientName: contact.name,
           recipientPhone: contact.phone,
-          message: `⚠️ ${userData.name}'s vehicle has been stopped for ${duration} minutes at an unusual location.`,
+          message: `⚠️ Unusual stop alert for ${userData.name}. Vehicle stopped for ${duration} minutes at an unexpected location.`,
           type: 'long_stop',
           tripId: tripId,
           timestamp: new Date().toISOString(),

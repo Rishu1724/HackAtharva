@@ -3,15 +3,19 @@ import { View, StyleSheet, Alert } from 'react-native';
 import { Text, Card, FAB, Chip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import { getDistance } from 'geolib';
 import { doc, setDoc, updateDoc, collection, addDoc } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 import DriverBehaviorService from '../../services/DriverBehaviorService';
 import DriverTripMap from '../../components/maps/DriverTripMap';
+import NotificationService from '../../services/NotificationService';
+import { getBackendUrl } from '../../utils/backendUrl';
 
 export default function DriverTripScreen() {
   const [tripActive, setTripActive] = useState(false);
   const [location, setLocation] = useState(null);
   const [routePath, setRoutePath] = useState([]);
+  const [expectedRoute, setExpectedRoute] = useState([]);
   const [speed, setSpeed] = useState(0);
   const [passengers, setPassengers] = useState(0);
   const [driverScore, setDriverScore] = useState(100);
@@ -19,6 +23,7 @@ export default function DriverTripScreen() {
   const tripId = useRef(null);
   const previousSpeed = useRef(0);
   const previousTime = useRef(Date.now());
+  const lastDeviationAlertRef = useRef(0);
 
   useEffect(() => {
     requestLocationPermissions();
@@ -52,6 +57,34 @@ export default function DriverTripScreen() {
     }
   };
 
+  const loadExpectedRoute = async () => {
+    const backendUrl = getBackendUrl();
+    if (!backendUrl) return;
+
+    try {
+      const response = await fetch(`${backendUrl}/gps/route/${auth.currentUser.uid}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      const route = Array.isArray(data) ? data : data.route || [];
+      const cleaned = route
+        .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+        .map((p) => ({ latitude: p.lat, longitude: p.lng }));
+      setExpectedRoute(cleaned);
+    } catch (error) {
+      console.error('Error loading expected route:', error);
+    }
+  };
+
+  const getRouteDeviationMeters = (coords) => {
+    if (!expectedRoute.length) return null;
+    let minDistance = Infinity;
+    expectedRoute.forEach((point) => {
+      const distance = getDistance(coords, point);
+      if (distance < minDistance) minDistance = distance;
+    });
+    return Number.isFinite(minDistance) ? minDistance : null;
+  };
+
   const startTrip = async () => {
     if (!location) {
       Alert.alert('Error', 'Unable to get your location. Please try again.');
@@ -59,6 +92,8 @@ export default function DriverTripScreen() {
     }
 
     try {
+      await loadExpectedRoute();
+
       // Create trip document
       const tripRef = await addDoc(collection(db, 'driverTrips'), {
         driverId: auth.currentUser.uid,
@@ -151,6 +186,26 @@ export default function DriverTripScreen() {
 
     // Update driver score
     setDriverScore(100 - behaviorAnalysis.riskScore);
+
+    const deviationMeters = getRouteDeviationMeters(coords);
+    if (deviationMeters !== null && deviationMeters > 200) {
+      const now = Date.now();
+      if (now - lastDeviationAlertRef.current > 20000) {
+        lastDeviationAlertRef.current = now;
+        NotificationService.notifyRouteDeviationBroadcast(
+          auth.currentUser.uid,
+          coords,
+          Math.round(deviationMeters)
+        );
+        await addDoc(collection(db, 'geofenceAlerts'), {
+          driverId: auth.currentUser.uid,
+          distance: deviationMeters,
+          location: coords,
+          createdAt: new Date().toISOString(),
+          severity: 'high',
+        });
+      }
+    }
 
     // Update vehicle location in Firestore
     if (tripId.current) {

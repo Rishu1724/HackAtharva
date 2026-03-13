@@ -6,16 +6,29 @@ import {
   TouchableOpacity,
   Vibration,
   Platform,
+  Image,
 } from 'react-native';
-import { Text, Button, Card, FAB, Portal, Modal, Chip } from 'react-native-paper';
+import { Text, Button, Card, FAB, Portal, Modal, Chip, TextInput } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { useNavigation } from '@react-navigation/native';
-import { doc, setDoc, updateDoc, onSnapshot, collection, addDoc } from 'firebase/firestore';
+import Constants from 'expo-constants';
+import {
+  doc,
+  setDoc,
+  updateDoc,
+  onSnapshot,
+  collection,
+  addDoc,
+  query,
+  where,
+  getDocs,
+} from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 import CameraModal from '../../components/CameraModal';
 import PassengerTripMap from '../../components/maps/PassengerTripMap';
 import { getDistance } from 'geolib';
+import NotificationService from '../../services/NotificationService';
 
 export default function TripScreen() {
   const navigation = useNavigation();
@@ -23,14 +36,27 @@ export default function TripScreen() {
   const [location, setLocation] = useState(null);
   const [tripData, setTripData] = useState(null);
   const [routePath, setRoutePath] = useState([]);
+  const [plannedRoutes, setPlannedRoutes] = useState([]);
+  const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
+  const [expectedRoute, setExpectedRoute] = useState([]);
   const [cameraVisible, setCameraVisible] = useState(false);
   const [speed, setSpeed] = useState(0);
   const [vehicleLocation, setVehicleLocation] = useState(null);
   const [alerts, setAlerts] = useState([]);
+  const [vehicleNumber, setVehicleNumber] = useState('');
+  const [sourceText, setSourceText] = useState('');
+  const [destinationText, setDestinationText] = useState('');
+  const [sourceSuggestions, setSourceSuggestions] = useState([]);
+  const [destinationSuggestions, setDestinationSuggestions] = useState([]);
+  const [driverId, setDriverId] = useState(null);
+  const [cctvFrame, setCctvFrame] = useState(null);
+  const [cctvStatus, setCctvStatus] = useState('');
   const locationSubscription = useRef(null);
   const tripId = useRef(null);
+  const routePathRef = useRef([]);
   const lastSpeedAlertRef = useRef(0);
   const lastDeviationAlertRef = useRef(0);
+  const vehicleSubscription = useRef(null);
 
   useEffect(() => {
     requestLocationPermissions();
@@ -43,24 +69,27 @@ export default function TripScreen() {
   }, []);
 
   useEffect(() => {
-    if (tripActive && tripId.current) {
-      // Listen for vehicle updates
-      const unsubscribe = onSnapshot(
-        doc(db, 'trips', tripId.current),
-        (doc) => {
-          if (doc.exists()) {
-            const data = doc.data();
-            if (data.vehicleLocation) {
-              setVehicleLocation(data.vehicleLocation);
-              checkRouteDeviation(data.vehicleLocation);
-            }
-          }
-        }
-      );
-
-      return () => unsubscribe();
-    }
+    return () => {
+      if (vehicleSubscription.current) {
+        vehicleSubscription.current();
+        vehicleSubscription.current = null;
+      }
+    };
   }, [tripActive]);
+
+  useEffect(() => {
+    if (!tripActive || !driverId) return;
+
+    const frameRef = doc(db, 'driverFrames', driverId);
+    const unsubscribe = onSnapshot(frameRef, (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      setCctvFrame(data.imageBase64 || null);
+      setCctvStatus(data.flag || '');
+    });
+
+    return () => unsubscribe();
+  }, [tripActive, driverId]);
 
   const requestLocationPermissions = async () => {
     try {
@@ -91,10 +120,54 @@ export default function TripScreen() {
       return;
     }
 
+    if (!vehicleNumber.trim() || !sourceText.trim() || !destinationText.trim()) {
+      Alert.alert('Missing Details', 'Enter vehicle number, source, and destination to start.');
+      return;
+    }
+
     try {
+      const normalizedVehicleNumber = vehicleNumber.trim().toUpperCase();
+      const vehicleQuery = query(
+        collection(db, 'vehicles'),
+        where('number', '==', normalizedVehicleNumber),
+        where('status', '==', 'active')
+      );
+      let vehicleSnapshot = await getDocs(vehicleQuery);
+      if (vehicleSnapshot.empty) {
+        const fallbackQuery = query(
+          collection(db, 'vehicles'),
+          where('number', '==', vehicleNumber.trim()),
+          where('status', '==', 'active')
+        );
+        vehicleSnapshot = await getDocs(fallbackQuery);
+      }
+      if (vehicleSnapshot.empty) {
+        Alert.alert('Not Found', 'No active vehicle found with that number.');
+        return;
+      }
+
+      const vehicleDoc = vehicleSnapshot.docs[0];
+      const vehicleData = vehicleDoc.data();
+      const matchedDriverId = vehicleData.driverId || vehicleDoc.id;
+
+      const routeResult = await fetchPlannedRoute(sourceText, destinationText);
+      if (!routeResult.routes.length) {
+        Alert.alert('Route Error', 'Unable to build a route. Check source and destination.');
+        return;
+      }
+      const expected = routeResult.routes[routeResult.shortestIndex];
+
       // Create trip document
       const tripRef = await addDoc(collection(db, 'trips'), {
         userId: auth.currentUser.uid,
+        driverId: matchedDriverId,
+        vehicleId: vehicleDoc.id,
+        vehicleNumber: normalizedVehicleNumber,
+        source: sourceText.trim(),
+        destination: destinationText.trim(),
+        expectedRoute: expected,
+        routeOptions: routeResult.routes,
+        selectedRouteIndex: routeResult.shortestIndex,
         startTime: new Date().toISOString(),
         startLocation: {
           latitude: location.latitude,
@@ -107,10 +180,32 @@ export default function TripScreen() {
 
       tripId.current = tripRef.id;
       setTripActive(true);
-      setRoutePath([{
+      setDriverId(matchedDriverId);
+      setPlannedRoutes(routeResult.routes);
+      setSelectedRouteIndex(routeResult.shortestIndex);
+      setExpectedRoute(expected);
+      const initialRoute = [{
         latitude: location.latitude,
         longitude: location.longitude,
-      }]);
+      }];
+      routePathRef.current = initialRoute;
+      setRoutePath(initialRoute);
+
+      if (vehicleSubscription.current) {
+        vehicleSubscription.current();
+      }
+
+      vehicleSubscription.current = onSnapshot(
+        doc(db, 'vehicles', matchedDriverId),
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data();
+          if (data?.location) {
+            setVehicleLocation(data.location);
+            checkRouteDeviation(data.location, expected);
+          }
+        }
+      );
 
       // Start location tracking
       locationSubscription.current = await Location.watchPositionAsync(
@@ -149,14 +244,16 @@ export default function TripScreen() {
     setSpeed(newLocation.coords.speed || 0);
 
     // Add to route path
-    setRoutePath((prev) => [...prev, coords]);
+    const nextRoutePath = [...routePathRef.current, coords];
+    routePathRef.current = nextRoutePath;
+    setRoutePath(nextRoutePath);
 
     // Update trip in Firestore
     if (tripId.current) {
       try {
         await updateDoc(doc(db, 'trips', tripId.current), {
           currentLocation: coords,
-          route: routePath,
+          route: nextRoutePath,
           lastUpdated: new Date().toISOString(),
           speed: newLocation.coords.speed || 0,
         });
@@ -183,25 +280,157 @@ export default function TripScreen() {
     }
   };
 
-  const checkRouteDeviation = (vehicleLoc) => {
-    if (!location || !vehicleLoc) return;
+  const checkRouteDeviation = (vehicleLoc, routeOverride = null) => {
+    const activeRoute = routeOverride || expectedRoute;
+    if (!vehicleLoc || !activeRoute.length) return;
 
-    const distance = getDistance(
-      { latitude: location.latitude, longitude: location.longitude },
-      { latitude: vehicleLoc.latitude, longitude: vehicleLoc.longitude }
-    );
+    let minDistance = Infinity;
+    activeRoute.forEach((point) => {
+      const distance = getDistance(vehicleLoc, point);
+      if (distance < minDistance) minDistance = distance;
+    });
 
-    // If distance between passenger and vehicle > 500m, alert
-    if (distance > 500) {
-      addAlert('deviation', `Possible route deviation detected. Distance from vehicle: ${Math.round(distance)}m`);
+    if (!Number.isFinite(minDistance)) return;
+
+    if (minDistance > 200) {
+      addAlert('deviation', `Route change detected. Deviation: ${Math.round(minDistance)}m`);
       Vibration.vibrate([0, 500, 200, 500]);
       const now = Date.now();
       if (now - lastDeviationAlertRef.current > 20000 && tripId.current) {
         lastDeviationAlertRef.current = now;
-        const NotificationService = require('../../services/NotificationService').default;
         NotificationService.notifyRouteDeviation(tripId.current, vehicleLoc);
       }
     }
+  };
+
+  const fetchPlannedRoute = async (source, destination) => {
+    const apiKey = Constants.expoConfig?.extra?.googleMapsApiKey || '';
+    if (!apiKey) return { routes: [], shortestIndex: 0 };
+
+    const parseRouteResponse = (data) => {
+      if (!data?.routes?.length) return { routes: [], shortestIndex: 0 };
+
+      const routes = data.routes
+        .map((route) => {
+          const polyline = route.overview_polyline?.points;
+          const distance = route.legs?.reduce(
+            (sum, leg) => sum + (leg.distance?.value || 0),
+            0
+          );
+          return {
+            distance,
+            points: polyline ? decodePolyline(polyline) : [],
+          };
+        })
+        .filter((route) => route.points.length > 0);
+
+      if (!routes.length) return { routes: [], shortestIndex: 0 };
+
+      let shortestIndex = 0;
+      routes.forEach((route, index) => {
+        if (route.distance < routes[shortestIndex].distance) {
+          shortestIndex = index;
+        }
+      });
+
+      return { routes: routes.map((route) => route.points), shortestIndex };
+    };
+
+    const fetchDirections = async (origin, destinationValue, alternatives) => {
+      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(
+        origin
+      )}&destination=${encodeURIComponent(destinationValue)}&alternatives=${alternatives ? 'true' : 'false'}&key=${apiKey}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      return parseRouteResponse(data);
+    };
+
+    try {
+      // First attempt: typed source and destination with alternatives.
+      let result = await fetchDirections(source, destination, true);
+      if (result.routes.length) return result;
+
+      // Second attempt: no alternatives can be more stable on some routes.
+      result = await fetchDirections(source, destination, false);
+      if (result.routes.length) return result;
+
+      // Third attempt: use current GPS position as origin if text source fails.
+      if (location?.latitude && location?.longitude) {
+        const originFromGps = `${location.latitude},${location.longitude}`;
+        result = await fetchDirections(originFromGps, destination, true);
+        if (result.routes.length) return result;
+
+        result = await fetchDirections(originFromGps, destination, false);
+        if (result.routes.length) return result;
+      }
+
+      return { routes: [], shortestIndex: 0 };
+    } catch (error) {
+      console.error('Error fetching route:', error);
+      return { routes: [], shortestIndex: 0 };
+    }
+  };
+
+  const fetchPlaceSuggestions = async (input, setResults) => {
+    const apiKey = Constants.expoConfig?.extra?.googleMapsApiKey || '';
+    if (!apiKey || !input.trim()) {
+      setResults([]);
+      return;
+    }
+
+    try {
+      const locationBias = location
+        ? `&location=${location.latitude},${location.longitude}&radius=30000&strictbounds=true`
+        : '';
+      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
+        input
+      )}&types=geocode${locationBias}&key=${apiKey}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      const predictions = data.predictions || [];
+      setResults(predictions.map((item) => item.description).slice(0, 5));
+    } catch (error) {
+      console.error('Error fetching place suggestions:', error);
+    }
+  };
+
+  const decodePolyline = (encoded) => {
+    let index = 0;
+    const len = encoded.length;
+    let lat = 0;
+    let lng = 0;
+    const coordinates = [];
+
+    while (index < len) {
+      let result = 0;
+      let shift = 0;
+      let byte = null;
+
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+
+      const deltaLat = (result & 1) ? ~(result >> 1) : result >> 1;
+      lat += deltaLat;
+
+      result = 0;
+      shift = 0;
+
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+
+      const deltaLng = (result & 1) ? ~(result >> 1) : result >> 1;
+      lng += deltaLng;
+
+      coordinates.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
+    }
+
+    return coordinates;
   };
 
   const addAlert = async (type, message) => {
@@ -249,6 +478,11 @@ export default function TripScreen() {
                 locationSubscription.current.remove();
               }
 
+              if (vehicleSubscription.current) {
+                vehicleSubscription.current();
+                vehicleSubscription.current = null;
+              }
+
               if (tripId.current) {
                 await updateDoc(doc(db, 'trips', tripId.current), {
                   endTime: new Date().toISOString(),
@@ -259,7 +493,13 @@ export default function TripScreen() {
 
               setTripActive(false);
               setRoutePath([]);
+              routePathRef.current = [];
+              setPlannedRoutes([]);
+              setExpectedRoute([]);
+              setSelectedRouteIndex(0);
               setAlerts([]);
+              setVehicleLocation(null);
+              setDriverId(null);
               tripId.current = null;
 
               Alert.alert('Trip Ended', 'Your trip has been ended successfully.');
@@ -308,6 +548,8 @@ export default function TripScreen() {
         location={location}
         vehicleLocation={vehicleLocation}
         routePath={routePath}
+        routeOptions={plannedRoutes}
+        selectedRouteIndex={selectedRouteIndex}
         tripActive={tripActive}
       />
 
@@ -329,6 +571,18 @@ export default function TripScreen() {
                 <Text variant="bodySmall" style={styles.tripDetail}>
                   Distance: {Math.round(routePath.length * 0.01)} km
                 </Text>
+                <Text variant="bodySmall" style={styles.tripDetail}>
+                  CCTV Status: {cctvStatus || 'Waiting for feed'}
+                </Text>
+                <View style={styles.cctvPreview}>
+                  {cctvFrame ? (
+                    <Image source={{ uri: cctvFrame }} style={styles.cctvImage} />
+                  ) : (
+                    <Text variant="bodySmall" style={styles.cctvPlaceholder}>
+                      No CCTV video yet. Start CCTV on the 3rd phone.
+                    </Text>
+                  )}
+                </View>
               </View>
             ) : (
               <View>
@@ -336,6 +590,66 @@ export default function TripScreen() {
                 <Text variant="bodySmall" style={styles.tripDetail}>
                   Your location will be shared with trusted contacts
                 </Text>
+                <TextInput
+                  label="Vehicle Number"
+                  value={vehicleNumber}
+                  onChangeText={setVehicleNumber}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  style={styles.input}
+                />
+                <TextInput
+                  label="Source"
+                  value={sourceText}
+                  onChangeText={(text) => {
+                    setSourceText(text);
+                    fetchPlaceSuggestions(text, setSourceSuggestions);
+                  }}
+                  autoCorrect={false}
+                  style={styles.input}
+                />
+                {!!sourceSuggestions.length && (
+                  <View style={styles.suggestionList}>
+                    {sourceSuggestions.map((item) => (
+                      <Chip
+                        key={item}
+                        onPress={() => {
+                          setSourceText(item);
+                          setSourceSuggestions([]);
+                        }}
+                        style={styles.suggestionChip}
+                      >
+                        {item}
+                      </Chip>
+                    ))}
+                  </View>
+                )}
+                <TextInput
+                  label="Destination"
+                  value={destinationText}
+                  onChangeText={(text) => {
+                    setDestinationText(text);
+                    fetchPlaceSuggestions(text, setDestinationSuggestions);
+                  }}
+                  autoCorrect={false}
+                  style={styles.input}
+                />
+                {!!destinationSuggestions.length && (
+                  <View style={styles.suggestionList}>
+                    {destinationSuggestions.map((item) => (
+                      <Chip
+                        key={item}
+                        onPress={() => {
+                          setDestinationText(item);
+                          setDestinationSuggestions([]);
+                        }}
+                        style={styles.suggestionChip}
+                      >
+                        {item}
+                      </Chip>
+                    ))}
+                  </View>
+                )}
               </View>
             )}
           </Card.Content>
@@ -445,6 +759,37 @@ const styles = StyleSheet.create({
   tripDetail: {
     color: '#666',
     marginTop: 4,
+  },
+  input: {
+    marginTop: 12,
+    backgroundColor: '#fff',
+  },
+  cctvPreview: {
+    marginTop: 12,
+    height: 160,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#111',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cctvImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cctvPlaceholder: {
+    color: '#fff',
+    textAlign: 'center',
+    paddingHorizontal: 16,
+  },
+  suggestionList: {
+    marginTop: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  suggestionChip: {
+    backgroundColor: '#F3F4F6',
   },
   alertsContainer: {
     marginTop: 12,

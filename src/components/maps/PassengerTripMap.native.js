@@ -3,11 +3,32 @@ import { StyleSheet } from 'react-native';
 import MapView, { Marker, Polyline, Circle } from 'react-native-maps';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-export default function PassengerTripMap({ location, vehicleLocation, routePath, tripActive }) {
+export default function PassengerTripMap({
+  location,
+  vehicleLocation,
+  routePath,
+  routeOptions,
+  selectedRouteIndex,
+  tripActive,
+}) {
+  const region = location
+    ? {
+        latitude: location.latitude,
+        longitude: location.longitude,
+        latitudeDelta: location.latitudeDelta ?? 0.01,
+        longitudeDelta: location.longitudeDelta ?? 0.01,
+      }
+    : null;
+
+  if (!region) {
+    return null;
+  }
+
   return (
     <MapView
       style={styles.map}
-      initialRegion={location}
+      region={region}
+      initialRegion={region}
       showsUserLocation
       showsMyLocationButton
       followsUserLocation={tripActive}
@@ -32,13 +53,22 @@ export default function PassengerTripMap({ location, vehicleLocation, routePath,
         </Marker>
       )}
 
-      {routePath.length > 1 && (
-        <Polyline
-          coordinates={routePath}
-          strokeColor="#6200ee"
-          strokeWidth={4}
-        />
-      )}
+      {routeOptions?.length
+        ? routeOptions.map((route, index) => (
+            <Polyline
+              key={`route-${index}`}
+              coordinates={route}
+              strokeColor={index === selectedRouteIndex ? '#1E88E5' : '#B0BEC5'}
+              strokeWidth={index === selectedRouteIndex ? 5 : 3}
+            />
+          ))
+        : routePath.length > 1 && (
+            <Polyline
+              coordinates={routePath}
+              strokeColor="#6200ee"
+              strokeWidth={4}
+            />
+          )}
 
       {tripActive && location && (
         <Circle

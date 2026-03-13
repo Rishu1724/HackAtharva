@@ -2,50 +2,95 @@ import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, Alert } from 'react-native';
 import { Text, Card, Button, Chip, FAB } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { auth, db } from '../../config/firebase';
+import { doc, getDoc, setDoc, collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { onValue, ref } from 'firebase/database';
+import { auth, db, rtdb } from '../../config/firebase';
 
 export default function DriverHomeScreen({ navigation }) {
   const [driverData, setDriverData] = useState(null);
   const [vehicleData, setVehicleData] = useState(null);
   const [isOnline, setIsOnline] = useState(false);
+  const [liveLocation, setLiveLocation] = useState(null);
+  const [alertsCount, setAlertsCount] = useState(0);
   const [todayStats, setTodayStats] = useState({
     trips: 0,
     passengers: 0,
     distance: 0,
-    rating: 5.0,
   });
 
   useEffect(() => {
-    fetchDriverData();
-    fetchTodayStats();
+    let cleanup = () => {};
+
+    (async () => {
+      const result = await fetchDriverData();
+      if (typeof result === 'function') {
+        cleanup = result;
+      }
+      await fetchTodayStats();
+    })();
+
+    return () => cleanup();
   }, []);
 
   const fetchDriverData = async () => {
     try {
-      const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
-      if (userDoc.exists()) {
-        setDriverData(userDoc.data());
-      }
+      const userRef = doc(db, 'users', auth.currentUser.uid);
+      const vehicleRef = doc(db, 'vehicles', auth.currentUser.uid);
 
-      // Fetch or create vehicle data
-      const vehicleDoc = await getDoc(doc(db, 'vehicles', auth.currentUser.uid));
-      if (vehicleDoc.exists()) {
-        setVehicleData(vehicleDoc.data());
-        setIsOnline(vehicleDoc.data().status === 'active');
-      } else {
-        // Create default vehicle
-        const defaultVehicle = {
+      const userUnsub = onSnapshot(userRef, (snap) => {
+        if (snap.exists()) {
+          setDriverData(snap.data());
+        }
+      });
+
+      const vehicleUnsub = onSnapshot(vehicleRef, async (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          setVehicleData(data);
+          setIsOnline(data.status === 'active');
+          return;
+        }
+
+        await setDoc(vehicleRef, {
           driverId: auth.currentUser.uid,
-          number: 'MH-01-AB-1234',
-          type: 'Bus',
-          capacity: 40,
-          route: 'Route 1',
+          number: '',
+          type: 'bus',
+          route: '',
+          capacity: null,
           status: 'inactive',
-        };
-        await setDoc(doc(db, 'vehicles', auth.currentUser.uid), defaultVehicle);
-        setVehicleData(defaultVehicle);
-      }
+          occupancy: 0,
+          schedule: '',
+          stops: [],
+          cabQueue: 0,
+          earningsToday: 0,
+          ratingAvg: null,
+          safetyScore: null,
+          createdAt: new Date().toISOString(),
+        });
+      });
+
+      const locationRef = ref(rtdb, `drivers/${auth.currentUser.uid}/location`);
+      const locationUnsub = onValue(locationRef, (snap) => {
+        const data = snap.val();
+        if (data?.lat && data?.lng) {
+          setLiveLocation(data);
+        }
+      });
+
+      const alertsQuery = query(
+        collection(db, 'geofenceAlerts'),
+        where('driverId', '==', auth.currentUser.uid)
+      );
+      const alertsUnsub = onSnapshot(alertsQuery, (snap) => {
+        setAlertsCount(snap.size);
+      });
+
+      return () => {
+        userUnsub();
+        vehicleUnsub();
+        locationUnsub();
+        alertsUnsub();
+      };
     } catch (error) {
       console.error('Error fetching driver data:', error);
     }
@@ -57,26 +102,25 @@ export default function DriverHomeScreen({ navigation }) {
       today.setHours(0, 0, 0, 0);
 
       const tripsQuery = query(
-        collection(db, 'trips'),
+        collection(db, 'driverTrips'),
         where('driverId', '==', auth.currentUser.uid),
         where('startTime', '>=', today.toISOString())
       );
 
       const tripsSnapshot = await getDocs(tripsQuery);
-      
+
       let totalDistance = 0;
-      tripsSnapshot.docs.forEach((doc) => {
-        const trip = doc.data();
-        if (trip.route && trip.route.length > 0) {
-          totalDistance += trip.route.length * 0.01; // Approximate distance
-        }
+      let totalPassengers = 0;
+      tripsSnapshot.docs.forEach((docSnap) => {
+        const trip = docSnap.data();
+        totalDistance += Number(trip.totalDistance || 0);
+        totalPassengers += Number(trip.passengers || 0);
       });
 
       setTodayStats({
         trips: tripsSnapshot.size,
-        passengers: tripsSnapshot.size * 2, // Approximate
+        passengers: totalPassengers,
         distance: Math.round(totalDistance),
-        rating: 4.8,
       });
     } catch (error) {
       console.error('Error fetching stats:', error);
@@ -103,6 +147,16 @@ export default function DriverHomeScreen({ navigation }) {
       Alert.alert('Error', 'Failed to update status');
     }
   };
+
+  const vehicleType = vehicleData?.type || 'bus';
+  const ratingText =
+    typeof vehicleData?.ratingAvg === 'number'
+      ? vehicleData.ratingAvg.toFixed(1)
+      : '—';
+  const safetyText =
+    typeof vehicleData?.safetyScore === 'number'
+      ? `${Math.round(vehicleData.safetyScore)}%`
+      : '—';
 
   return (
     <View style={styles.container}>
@@ -170,7 +224,7 @@ export default function DriverHomeScreen({ navigation }) {
               <View style={styles.statItem}>
                 <MaterialCommunityIcons name="star" size={32} color="#FFD700" />
                 <Text variant="headlineSmall" style={styles.statValue}>
-                  {todayStats.rating}
+                  {ratingText}
                 </Text>
                 <Text variant="bodySmall" style={styles.statLabel}>
                   Rating
@@ -190,21 +244,119 @@ export default function DriverHomeScreen({ navigation }) {
               <Text variant="bodyMedium" style={styles.infoLabel}>
                 Type:
               </Text>
-              <Text variant="bodyMedium">{vehicleData?.type || 'N/A'}</Text>
+              <Text variant="bodyMedium">{vehicleType}</Text>
             </View>
             <View style={styles.infoRow}>
               <Text variant="bodyMedium" style={styles.infoLabel}>
                 Capacity:
               </Text>
               <Text variant="bodyMedium">
-                {vehicleData?.capacity || 0} passengers
+                {vehicleData?.capacity ?? '—'}
               </Text>
             </View>
             <View style={styles.infoRow}>
               <Text variant="bodyMedium" style={styles.infoLabel}>
                 Route:
               </Text>
-              <Text variant="bodyMedium">{vehicleData?.route || 'N/A'}</Text>
+              <Text variant="bodyMedium">{vehicleData?.route || '—'}</Text>
+            </View>
+          </Card.Content>
+        </Card>
+
+        {vehicleType === 'bus' ? (
+          <Card style={styles.card}>
+            <Card.Content>
+              <Text variant="titleMedium" style={styles.sectionTitle}>
+                Bus Operations
+              </Text>
+              <View style={styles.infoRow}>
+                <Text variant="bodyMedium" style={styles.infoLabel}>
+                  Occupancy:
+                </Text>
+                <Text variant="bodyMedium">{vehicleData?.occupancy ?? '—'}</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text variant="bodyMedium" style={styles.infoLabel}>
+                  Schedule:
+                </Text>
+                <Text variant="bodyMedium">{vehicleData?.schedule || '—'}</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text variant="bodyMedium" style={styles.infoLabel}>
+                  Stops:
+                </Text>
+                <Text variant="bodyMedium">
+                  {Array.isArray(vehicleData?.stops) && vehicleData.stops.length
+                    ? vehicleData.stops.join(', ')
+                    : '—'}
+                </Text>
+              </View>
+            </Card.Content>
+          </Card>
+        ) : (
+          <Card style={styles.card}>
+            <Card.Content>
+              <Text variant="titleMedium" style={styles.sectionTitle}>
+                Cab Operations
+              </Text>
+              <View style={styles.infoRow}>
+                <Text variant="bodyMedium" style={styles.infoLabel}>
+                  Trip Queue:
+                </Text>
+                <Text variant="bodyMedium">{vehicleData?.cabQueue ?? '—'}</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text variant="bodyMedium" style={styles.infoLabel}>
+                  Earnings (Today):
+                </Text>
+                <Text variant="bodyMedium">{vehicleData?.earningsToday ?? '—'}</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text variant="bodyMedium" style={styles.infoLabel}>
+                  Rating:
+                </Text>
+                <Text variant="bodyMedium">{ratingText}</Text>
+              </View>
+            </Card.Content>
+          </Card>
+        )}
+
+        <Card style={styles.card}>
+          <Card.Content>
+            <Text variant="titleMedium" style={styles.sectionTitle}>
+              Safety & Live Status
+            </Text>
+            <View style={styles.infoRow}>
+              <Text variant="bodyMedium" style={styles.infoLabel}>
+                Safety Score:
+              </Text>
+              <Text variant="bodyMedium">{safetyText}</Text>
+            </View>
+            <View style={styles.infoRow}>
+              <Text variant="bodyMedium" style={styles.infoLabel}>
+                Alerts:
+              </Text>
+              <Text variant="bodyMedium">{alertsCount}</Text>
+            </View>
+            <View style={styles.infoRow}>
+              <Text variant="bodyMedium" style={styles.infoLabel}>
+                Live Location:
+              </Text>
+              <Text variant="bodyMedium">
+                {liveLocation?.lat && liveLocation?.lng
+                  ? `${liveLocation.lat.toFixed(5)}, ${liveLocation.lng.toFixed(5)}`
+                  : '—'}
+              </Text>
+            </View>
+            <View style={styles.infoRow}>
+              <Text variant="bodyMedium" style={styles.infoLabel}>
+                Speed:
+              </Text>
+              <Text variant="bodyMedium">
+                {typeof liveLocation?.speed === 'number'
+                  ? `${Math.round(liveLocation.speed)} km/h`
+                  : '—'}
+              </Text>
             </View>
           </Card.Content>
         </Card>

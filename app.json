@@ -21,7 +21,9 @@
         "NSLocationWhenInUseUsageDescription": "We need your location to track your trip and ensure your safety.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "We need your location to track your trip and send alerts to your trusted contacts.",
         "NSCameraUsageDescription": "Camera is used for emergency surveillance and incident recording.",
-        "UIBackgroundModes": ["location"]
+        "UIBackgroundModes": [
+          "location"
+        ]
       }
     },
     "android": {
@@ -36,7 +38,11 @@
         "ACCESS_BACKGROUND_LOCATION",
         "CAMERA",
         "RECORD_AUDIO",
-        "READ_CONTACTS"
+        "READ_CONTACTS",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ],
       "config": {
         "googleMaps": {
@@ -59,9 +65,13 @@
           "locationWhenInUsePermission": "Allow Smart Transport Safety to use your location for trip tracking."
         }
       ]
-    ]
-    ,"extra": {
-      "backendUrl": "http://10.38.160.79:8000"
+    ],
+    "extra": {
+      "backendUrl": "http://10.38.160.79:8002",
+      "googleMapsApiKey": "AIzaSyDvHYVHJqNEE6Eqf8j3GOsqXe1of5WFGjU",
+      "eas": {
+        "projectId": "219832f3-3a24-41dc-ab36-e565c9a00d13"
+      }
     }
   }
 }

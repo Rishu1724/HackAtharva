@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Alert,
   Linking,
+  Share,
 } from 'react-native';
 import { Text, Card, FAB, Button, Portal, Modal } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -66,24 +67,90 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
+  const getBestEffortLocation = async () => {
+    if (location) {
+      return location;
+    }
+
+    try {
+      const permission = await Location.getForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        return null;
+      }
+
+      const latest = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      if (latest?.coords) {
+        setLocation(latest.coords);
+        return latest.coords;
+      }
+    } catch (error) {
+      console.error('Error getting fallback location:', error);
+    }
+
+    return null;
+  };
+
   const handleSOS = () => {
     setSosModalVisible(true);
   };
 
+  const shareSOSDetails = async (coords) => {
+    try {
+      const mapUrl = coords
+        ? `https://maps.google.com/?q=${coords.latitude},${coords.longitude}`
+        : null;
+
+      const locationLines = coords
+        ? [
+            'My live location is attached below:',
+            `Latitude: ${coords.latitude.toFixed(5)}`,
+            `Longitude: ${coords.longitude.toFixed(5)}`,
+            mapUrl ? `Map: ${mapUrl}` : null,
+          ]
+            .filter(Boolean)
+        : [
+            'GPS is unavailable right now. Please stay on call/text with me until I confirm I am safe.',
+            'Treat this as urgent and share my last known location if you have it.',
+          ];
+
+      const message = [
+        '🚨 SOS ALERT',
+        'I need immediate help and have triggered the in-app SOS alarm.',
+        ...locationLines,
+      ].join('\n');
+
+      await Share.share({
+        message,
+        title: 'SOS Alert',
+      });
+    } catch (error) {
+      console.error('Error sharing SOS message:', error);
+    }
+  };
+
   const confirmSOS = async () => {
     setSosModalVisible(false);
-    
-    // This will be handled by the SOSService
+
     try {
       const SOSService = require('../../services/SOSService').default;
-      await SOSService.triggerSOS(location);
+      const activeLocation = await getBestEffortLocation();
+
+      await SOSService.triggerSOS(activeLocation);
+      await shareSOSDetails(activeLocation);
+
       Alert.alert(
         'SOS Activated',
-        'Your trusted contacts and authorities have been notified. Stay safe!',
+        activeLocation
+          ? 'Help alerts have been sent with your live location. Share sheet remained open if you want to forward manually.'
+          : 'Help alerts have been sent, but GPS was unavailable. Share the fallback message so trusted contacts call you immediately.',
         [{ text: 'OK' }]
       );
     } catch (error) {
-      Alert.alert('Error', 'Failed to send SOS alert');
+      console.error('Error during SOS trigger:', error);
+      Alert.alert('Error', 'Failed to send SOS alert. Please retry or place an emergency call.');
     }
   };
 

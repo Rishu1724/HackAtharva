@@ -4,10 +4,24 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export default function DriverTripMap({ location, routePath, tripActive }) {
+  const region = location
+    ? {
+        latitude: location.latitude,
+        longitude: location.longitude,
+        latitudeDelta: location.latitudeDelta ?? 0.01,
+        longitudeDelta: location.longitudeDelta ?? 0.01,
+      }
+    : null;
+
+  if (!region) {
+    return null;
+  }
+
   return (
     <MapView
       style={styles.map}
-      initialRegion={location}
+      region={region}
+      initialRegion={region}
       showsUserLocation
       showsMyLocationButton
       followsUserLocation={tripActive}

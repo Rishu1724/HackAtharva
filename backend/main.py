@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-import random
+import os
 from datetime import datetime
 from typing import List, Literal, Optional, Dict, Any
 
@@ -18,6 +18,12 @@ app = FastAPI(title="Driver Monitoring Backend", version="1.0.0")
 GPS_STORE: dict[str, list[dict]] = {}
 ALERT_STORE: list[dict] = []
 ROUTE_STORE: dict[str, list[dict]] = {}
+DROWSY_STATE: dict[str, int] = {}
+LATEST_FRAME: dict[str, dict] = {}
+
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+ALERT_SENDER_EMAIL = os.getenv("ALERT_SENDER_EMAIL")
+ALERT_SENDER_NAME = os.getenv("ALERT_SENDER_NAME", "Smart Transport Safety")
 
 
 class AnalyzeFrameRequest(BaseModel):
@@ -27,7 +33,13 @@ class AnalyzeFrameRequest(BaseModel):
 
 
 class AnalyzeFrameResponse(BaseModel):
+  driverId: str
+  timestamp: str
   flag: Literal["DROWSY", "DISTRACTED", "NORMAL"]
+  action: str
+  severity: Literal["LOW", "MEDIUM", "HIGH"]
+  detail: str
+  metrics: Dict[str, Any]
 
 
 class GPSUpdateRequest(BaseModel):
@@ -59,6 +71,51 @@ class PushRequest(BaseModel):
   data: Optional[Dict[str, Any]] = None
 
 
+class EmailRequest(BaseModel):
+  toEmail: str
+  subject: str
+  body: str
+
+
+def deliver_email_via_sendgrid(to_email: str, subject: str, body: str) -> dict[str, str]:
+  if not to_email:
+    raise ValueError("Recipient email is required")
+
+  if not SENDGRID_API_KEY or not ALERT_SENDER_EMAIL:
+    print("SendGrid credentials missing. Skipping email delivery.")
+    return {"status": "skipped", "reason": "Email service not configured"}
+
+  payload = {
+    "personalizations": [{"to": [{"email": to_email}]}],
+    "from": {"email": ALERT_SENDER_EMAIL, "name": ALERT_SENDER_NAME},
+    "subject": subject,
+    "content": [
+      {
+        "type": "text/plain",
+        "value": body,
+      }
+    ],
+  }
+
+  headers = {
+    "Authorization": f"Bearer {SENDGRID_API_KEY}",
+    "Content-Type": "application/json",
+  }
+
+  response = requests.post(
+    "https://api.sendgrid.com/v3/mail/send",
+    json=payload,
+    headers=headers,
+    timeout=10,
+  )
+
+  if response.status_code not in (200, 202):
+    detail = response.text or response.reason
+    raise HTTPException(status_code=500, detail=f"Email send failed: {detail}")
+
+  return {"status": "sent"}
+
+
 def decode_base64_to_image(image_base64: str) -> np.ndarray:
   if "," in image_base64:
     image_base64 = image_base64.split(",", 1)[1]
@@ -71,25 +128,69 @@ def decode_base64_to_image(image_base64: str) -> np.ndarray:
   return image
 
 
-def analyze_driver_state(frame: np.ndarray) -> Literal["DROWSY", "DISTRACTED", "NORMAL"]:
-  # Placeholder hybrid logic for hackathon demo:
-  # You can replace this with eye-aspect-ratio + head pose from MediaPipe FaceMesh.
+def _eye_aspect_ratio(landmarks: list[tuple[float, float]], eye_idx: list[int]) -> float:
+  p1 = np.array(landmarks[eye_idx[0]])
+  p2 = np.array(landmarks[eye_idx[1]])
+  p3 = np.array(landmarks[eye_idx[2]])
+  p4 = np.array(landmarks[eye_idx[3]])
+  p5 = np.array(landmarks[eye_idx[4]])
+  p6 = np.array(landmarks[eye_idx[5]])
+
+  vertical_1 = np.linalg.norm(p2 - p6)
+  vertical_2 = np.linalg.norm(p3 - p5)
+  horizontal = np.linalg.norm(p1 - p4)
+  if horizontal == 0:
+    return 0.0
+  return (vertical_1 + vertical_2) / (2.0 * horizontal)
+
+
+def analyze_driver_state(
+  driver_id: str, frame: np.ndarray
+) -> tuple[Literal["DROWSY", "DISTRACTED", "NORMAL"], dict[str, Any]]:
   rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-  mp_face_detection = mp.solutions.face_detection
+  mp_face_mesh = mp.solutions.face_mesh
 
-  with mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.5) as detector:
-    result = detector.process(rgb)
+  with mp_face_mesh.FaceMesh(
+    static_image_mode=False,
+    max_num_faces=1,
+    refine_landmarks=True,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5,
+  ) as face_mesh:
+    result = face_mesh.process(rgb)
 
-  if not result.detections:
-    return "DISTRACTED"
+  if not result.multi_face_landmarks:
+    return "DISTRACTED", {"reason": "Face not detected or occluded"}
 
-  # Randomized fallback for demo variability.
-  r = random.random()
-  if r < 0.08:
-    return "DROWSY"
-  if r < 0.20:
-    return "DISTRACTED"
-  return "NORMAL"
+  h, w, _ = frame.shape
+  face_landmarks = result.multi_face_landmarks[0]
+  points = [(lm.x * w, lm.y * h) for lm in face_landmarks.landmark]
+
+  left_eye = [263, 387, 385, 362, 380, 373]
+  right_eye = [33, 160, 158, 133, 153, 144]
+  ear_left = _eye_aspect_ratio(points, left_eye)
+  ear_right = _eye_aspect_ratio(points, right_eye)
+  ear = (ear_left + ear_right) / 2.0
+
+  # Simple drowsiness detection based on eye aspect ratio.
+  threshold = 0.20
+  count = DROWSY_STATE.get(driver_id, 0)
+  if ear < threshold:
+    count += 1
+  else:
+    count = 0
+
+  DROWSY_STATE[driver_id] = count
+  metrics = {
+    "eyeAspectRatio": round(float(ear), 4),
+    "threshold": threshold,
+    "drowsyFrameStreak": count,
+  }
+
+  if count >= 3:
+    return "DROWSY", metrics
+
+  return "NORMAL", metrics
 
 
 @app.post("/ai/analyze-frame", response_model=AnalyzeFrameResponse)
@@ -99,8 +200,60 @@ def analyze_frame(payload: AnalyzeFrameRequest) -> AnalyzeFrameResponse:
   except Exception as exc:
     raise HTTPException(status_code=400, detail=f"Invalid frame payload: {exc}")
 
-  flag = analyze_driver_state(frame)
-  return AnalyzeFrameResponse(flag=flag)
+  flag, metrics = analyze_driver_state(payload.driverId, frame)
+  # Store latest frame for passenger preview.
+  image_payload = payload.imageBase64
+  if not image_payload.startswith("data:image/"):
+    image_payload = f"data:image/jpg;base64,{image_payload}"
+  LATEST_FRAME[payload.driverId] = {
+    "imageBase64": image_payload,
+    "timestamp": payload.timestamp,
+    "flag": flag,
+    "metrics": metrics,
+  }
+  action = "Continue normal monitoring"
+  severity: Literal["LOW", "MEDIUM", "HIGH"] = "LOW"
+  if flag == "DROWSY":
+    action = "Play loud alert immediately and advise passenger to use SOS if driver does not respond"
+    severity = "HIGH"
+  elif flag == "DISTRACTED":
+    action = "Warn driver immediately and keep monitoring for repeated distraction"
+    severity = "MEDIUM"
+
+  detail = "Eyes open and alert"
+  if flag == "DROWSY":
+    detail = (
+      "Eyes remained closed across multiple frames. EAR "
+      f"{metrics.get('eyeAspectRatio', 'N/A')} fell below threshold {metrics.get('threshold', 'N/A')}"
+    )
+  elif flag == "DISTRACTED":
+    detail = metrics.get("reason", "Driver attention deviated from the road")
+  else:
+    detail = (
+      "Eyes steady with EAR "
+      f"{metrics.get('eyeAspectRatio', 'N/A')} above threshold {metrics.get('threshold', 'N/A')}"
+    )
+
+  LATEST_FRAME[payload.driverId]["detail"] = detail
+  LATEST_FRAME[payload.driverId]["severity"] = severity
+
+  return AnalyzeFrameResponse(
+    driverId=payload.driverId,
+    timestamp=payload.timestamp,
+    flag=flag,
+    action=action,
+    severity=severity,
+    detail=detail,
+    metrics=metrics,
+  )
+
+
+@app.get("/ai/latest-frame/{driver_id}")
+def get_latest_frame(driver_id: str):
+  data = LATEST_FRAME.get(driver_id)
+  if not data:
+    raise HTTPException(status_code=404, detail="No frame available")
+  return data
 
 
 @app.post("/gps/update")
@@ -170,3 +323,16 @@ def send_push(payload: PushRequest):
     raise HTTPException(status_code=500, detail="Push send failed")
 
   return {"ok": True}
+
+
+@app.post("/alerts/email")
+def send_alert_email(payload: EmailRequest):
+  try:
+    result = deliver_email_via_sendgrid(payload.toEmail, payload.subject, payload.body)
+  except HTTPException:
+    # Re-raise HTTP errors so FastAPI returns proper response
+    raise
+  except Exception as exc:
+    raise HTTPException(status_code=500, detail=f"Email send failed: {exc}") from exc
+
+  return {"ok": True, **result}

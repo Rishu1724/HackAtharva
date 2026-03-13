@@ -10,15 +10,18 @@ import {
 import { TextInput, Button, Text, Card } from 'react-native-paper';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../config/firebase';
+import { useTranslation } from 'react-i18next';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const { t } = useTranslation();
 
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      Alert.alert(t('errors.generic'), t('errors.fillAll'));
       return;
     }
 
@@ -27,7 +30,7 @@ export default function LoginScreen({ navigation }) {
       await signInWithEmailAndPassword(auth, email, password);
       // Navigation handled by auth state observer in App.js
     } catch (error) {
-      Alert.alert('Login Error', error.message);
+      Alert.alert(t('errors.generic'), error.message);
     } finally {
       setLoading(false);
     }
@@ -41,15 +44,17 @@ export default function LoginScreen({ navigation }) {
       <ScrollView contentContainerStyle={styles.scrollView}>
         <Card style={styles.card}>
           <Card.Content>
+            <LanguageSwitcher />
+
             <Text variant="headlineLarge" style={styles.title}>
-              Smart Transport Safety
+              {t('app.title')}
             </Text>
             <Text variant="bodyMedium" style={styles.subtitle}>
-              Your Safety, Our Priority
+              {t('app.tagline')}
             </Text>
 
             <TextInput
-              label="Email"
+              label={t('auth.email')}
               value={email}
               onChangeText={setEmail}
               mode="outlined"
@@ -59,7 +64,7 @@ export default function LoginScreen({ navigation }) {
             />
 
             <TextInput
-              label="Password"
+              label={t('auth.password')}
               value={password}
               onChangeText={setPassword}
               mode="outlined"
@@ -74,7 +79,7 @@ export default function LoginScreen({ navigation }) {
               disabled={loading}
               style={styles.button}
             >
-              Login
+              {t('auth.loginButton')}
             </Button>
 
             <Button
@@ -82,7 +87,7 @@ export default function LoginScreen({ navigation }) {
               onPress={() => navigation.navigate('Register')}
               style={styles.linkButton}
             >
-              Don't have an account? Register
+              {t('auth.noAccount')}
             </Button>
           </Card.Content>
         </Card>

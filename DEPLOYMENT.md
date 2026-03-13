@@ -162,19 +162,24 @@ await sns.publish({
 
 ### Email Service
 
-**Using SendGrid:**
-```javascript
-const sgMail = require('@sendgrid/mail');
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
-await sgMail.send({
-  to: email,
-  from: 'alerts@smarttransport.com',
-  subject: 'Emergency Alert',
-  text: message,
-  html: `<strong>${message}</strong>`
-});
+**Using SendGrid (FastAPI backend):**
+```bash
+export SENDGRID_API_KEY=SG.xxxxxx
+export ALERT_SENDER_EMAIL=alerts@smarttransport.com
+export ALERT_SENDER_NAME="Smart Transport Safety"
 ```
+
+The backend exposes `POST /alerts/email` which accepts:
+
+```json
+{
+  "toEmail": "contact@example.com",
+  "subject": "🚨 SOS Alert for Passenger",
+  "body": "..."
+}
+```
+
+When the env vars above are configured, the service calls SendGrid's REST API and returns `{ "status": "sent" }`. If the keys are missing, the endpoint safely responds with `{ "status": "skipped" }` so the client can fall back to other channels.
 
 ## 🚨 Emergency Services Integration
 

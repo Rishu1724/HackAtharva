@@ -11,6 +11,8 @@ import { TextInput, Button, Text, Card, RadioButton } from 'react-native-paper';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { useTranslation } from 'react-i18next';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 export default function RegisterScreen({ navigation }) {
   const [name, setName] = useState('');
@@ -18,11 +20,21 @@ export default function RegisterScreen({ navigation }) {
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [role, setRole] = useState('passenger');
+  const [driverType, setDriverType] = useState('bus');
+  const [vehicleNumber, setVehicleNumber] = useState('');
+  const [vehicleRoute, setVehicleRoute] = useState('');
+  const [vehicleCapacity, setVehicleCapacity] = useState('');
   const [loading, setLoading] = useState(false);
+  const { t } = useTranslation();
 
   const handleRegister = async () => {
     if (!name || !email || !password || !phone) {
-      Alert.alert('Error', 'Please fill in all fields');
+      Alert.alert(t('errors.generic'), t('errors.fillAll'));
+      return;
+    }
+
+    if (role === 'driver' && !vehicleNumber.trim()) {
+      Alert.alert(t('errors.generic'), t('errors.driverVehicleMissing'));
       return;
     }
 
@@ -42,9 +54,29 @@ export default function RegisterScreen({ navigation }) {
         trustedContacts: [],
       });
 
-      Alert.alert('Success', 'Account created successfully!');
+      if (role === 'driver') {
+        const capacityValue = Number(vehicleCapacity);
+        await setDoc(doc(db, 'vehicles', user.uid), {
+          driverId: user.uid,
+          number: vehicleNumber.trim(),
+          type: driverType,
+          route: vehicleRoute.trim(),
+          capacity: Number.isFinite(capacityValue) ? capacityValue : null,
+          status: 'inactive',
+          occupancy: 0,
+          schedule: '',
+          stops: [],
+          cabQueue: 0,
+          earningsToday: 0,
+          ratingAvg: null,
+          safetyScore: null,
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      Alert.alert(t('register.successTitle'), t('register.successMessage'));
     } catch (error) {
-      Alert.alert('Registration Error', error.message);
+      Alert.alert(t('errors.registrationFailed'), error.message);
     } finally {
       setLoading(false);
     }
@@ -58,12 +90,14 @@ export default function RegisterScreen({ navigation }) {
       <ScrollView contentContainerStyle={styles.scrollView}>
         <Card style={styles.card}>
           <Card.Content>
+            <LanguageSwitcher />
+
             <Text variant="headlineMedium" style={styles.title}>
-              Create Account
+              {t('register.title')}
             </Text>
 
             <TextInput
-              label="Full Name"
+              label={t('auth.fullName')}
               value={name}
               onChangeText={setName}
               mode="outlined"
@@ -71,7 +105,7 @@ export default function RegisterScreen({ navigation }) {
             />
 
             <TextInput
-              label="Email"
+              label={t('auth.email')}
               value={email}
               onChangeText={setEmail}
               mode="outlined"
@@ -81,7 +115,7 @@ export default function RegisterScreen({ navigation }) {
             />
 
             <TextInput
-              label="Phone Number"
+              label={t('auth.phone')}
               value={phone}
               onChangeText={setPhone}
               mode="outlined"
@@ -90,7 +124,7 @@ export default function RegisterScreen({ navigation }) {
             />
 
             <TextInput
-              label="Password"
+              label={t('auth.password')}
               value={password}
               onChangeText={setPassword}
               mode="outlined"
@@ -99,24 +133,65 @@ export default function RegisterScreen({ navigation }) {
             />
 
             <Text variant="titleSmall" style={styles.roleTitle}>
-              I am a:
+              {t('auth.iam')}
             </Text>
             <RadioButton.Group onValueChange={setRole} value={role}>
               <View style={styles.radioOption}>
                 <RadioButton value="passenger" />
-                <Text>Passenger</Text>
+                <Text>{t('roles.passenger')}</Text>
               </View>
               <View style={styles.radioOption}>
                 <RadioButton value="driver" />
-                <Text>Driver</Text>
+                <Text>{t('roles.driver')}</Text>
               </View>
-              {Platform.OS === 'web' && (
-                <View style={styles.radioOption}>
-                  <RadioButton value="admin" />
-                  <Text>Admin</Text>
-                </View>
-              )}
             </RadioButton.Group>
+
+            {role === 'driver' && (
+              <>
+                <Text variant="titleSmall" style={styles.roleTitle}>
+                  {t('auth.driverType')}
+                </Text>
+                <RadioButton.Group onValueChange={setDriverType} value={driverType}>
+                  <View style={styles.radioOption}>
+                    <RadioButton value="bus" />
+                    <Text>{t('auth.driverBus')}</Text>
+                  </View>
+                  <View style={styles.radioOption}>
+                    <RadioButton value="cab" />
+                    <Text>{t('auth.driverCab')}</Text>
+                  </View>
+                </RadioButton.Group>
+
+                <TextInput
+                  label={t('auth.vehicleNumber')}
+                  value={vehicleNumber}
+                  onChangeText={setVehicleNumber}
+                  mode="outlined"
+                  autoCapitalize="characters"
+                  style={styles.input}
+                />
+
+                {driverType === 'bus' && (
+                  <>
+                    <TextInput
+                      label={t('auth.routeName')}
+                      value={vehicleRoute}
+                      onChangeText={setVehicleRoute}
+                      mode="outlined"
+                      style={styles.input}
+                    />
+                    <TextInput
+                      label={t('auth.capacity')}
+                      value={vehicleCapacity}
+                      onChangeText={setVehicleCapacity}
+                      mode="outlined"
+                      keyboardType="number-pad"
+                      style={styles.input}
+                    />
+                  </>
+                )}
+              </>
+            )}
 
             <Button
               mode="contained"
@@ -125,7 +200,7 @@ export default function RegisterScreen({ navigation }) {
               disabled={loading}
               style={styles.button}
             >
-              Register
+              {t('auth.registerButton')}
             </Button>
 
             <Button
@@ -133,7 +208,7 @@ export default function RegisterScreen({ navigation }) {
               onPress={() => navigation.navigate('Login')}
               style={styles.linkButton}
             >
-              Already have an account? Login
+              {t('auth.haveAccount')}
             </Button>
           </Card.Content>
         </Card>
