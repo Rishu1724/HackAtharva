@@ -41,3 +41,7 @@ coverage/
 .expo-shared/
 backend/.venv/
 backend/__pycache__/
+backend/.venv/
+*.apk
+*.dylib
+*.so
