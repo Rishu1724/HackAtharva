@@ -23,12 +23,6 @@ Women using public transport often feel unsafe, especially at night. Existing to
 - **⭐ Safety Score** - Real-time safety rating based on driving patterns
 - **🚗 Trip Management** - Start/end trips and track performance
 
-### For Admins
-- **🎛️ Real-time Dashboard** - Monitor all active trips and vehicles
-- **🚨 SOS Alert Management** - Immediate visibility of emergency situations
-- **📈 Analytics** - Track safety metrics and driver performance
-- **👮 Authority Integration** - Connect with emergency services
-
 ## 🛠️ Technology Stack
 
 - **Frontend**: React Native with Expo
@@ -82,10 +76,6 @@ Women using public transport often feel unsafe, especially at night. Existing to
 - Email: `driver@test.com`
 - Password: `password123`
 
-**Admin Account:**
-- Email: `admin@test.com`
-- Password: `password123`
-
 ### Testing Features
 
 1. **Test SOS Alert**
@@ -107,12 +97,6 @@ Women using public transport often feel unsafe, especially at night. Existing to
    - Record video or take photo
    - Video uploads to Firebase Storage
 
-4. **Test Admin Dashboard**
-   - Login as admin
-   - View all active trips
-   - Monitor SOS alerts
-   - Check driver performance
-
 ## 📱 App Structure
 
 ```
@@ -131,8 +115,6 @@ src/
 │   │   ├── DriverHomeScreen.js
 │   │   ├── DriverTripScreen.js  # Location broadcasting
 │   │   └── DriverProfileScreen.js
-│   └── admin/                   # Admin dashboard
-│       └── AdminDashboard.js
 ├── services/
 │   ├── SOSService.js            # Emergency alert system
 │   ├── NotificationService.js   # Push notifications
@@ -158,7 +140,7 @@ This project is already configured with Firebase, but if you want to use your ow
 ### Firestore Collections
 
 The app automatically creates these collections:
-- `users` - User profiles (passenger/driver/admin)
+- `users` - User profiles (passenger/driver)
 - `trips` - Active and completed trips
 - `vehicles` - Vehicle information
 - `sosAlerts` - Emergency alerts
@@ -291,3 +273,4 @@ For hackathon support or questions:
 **Built with ❤️ for women's safety**
 
 *Last Updated: March 12, 2026*
+# HackAtharva
