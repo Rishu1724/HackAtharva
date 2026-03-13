@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 🚍 Smart Public Transport Safety System for Women
 
 A comprehensive real-time safety platform for women using public transport, built for hackathons with **all essential features working out of the box**.
@@ -273,6 +274,8 @@ For hackathon support or questions:
 **Built with ❤️ for women's safety**
 
 *Last Updated: March 12, 2026*
+...existing code...
 # HackAtharva
-# HackAtharva
+=======
+>>>>>>> b3a3bb4bf167357002ffffd2e839e74c3ad670c4
 # HackAtharva
