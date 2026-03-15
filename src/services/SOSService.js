@@ -1,24 +1,41 @@
-import { collection, addDoc, doc, getDoc, query, where, getDocs, updateDoc } from 'firebase/firestore';
+import { Linking, Platform, Vibration } from 'react-native';
+import * as Location from 'expo-location';
+import { collection, addDoc, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
-import NotificationService from './NotificationService';
-import { getBackendUrl } from '../utils/backendUrl';
 
 class SOSService {
-  async triggerSOS(location, tripId = null) {
+  async triggerSOS(location = null, tripId = null) {
     try {
       const currentUserId = auth.currentUser?.uid;
       if (!currentUserId) {
         throw new Error('User not authenticated');
       }
 
-      const normalizedLocation = location
+      // Vibrate the phone when SOS is activated
+      Vibration.vibrate([500, 500, 500]);
+
+      // 1. Get current GPS location if not provided
+      let currentLoc = location;
+      if (!currentLoc) {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+          currentLoc = pos.coords;
+        }
+      }
+
+      const normalizedLocation = currentLoc
         ? {
-            latitude: location.latitude,
-            longitude: location.longitude,
+            latitude: currentLoc.latitude,
+            longitude: currentLoc.longitude,
           }
         : null;
 
-      // Create SOS alert in Firestore
+      const mapUrl = normalizedLocation
+        ? `https://maps.google.com/?q=${normalizedLocation.latitude},${normalizedLocation.longitude}`
+        : null;
+
+      // 2. Store SOS alert in Firestore
       const sosRef = await addDoc(collection(db, 'sosAlerts'), {
         userId: currentUserId,
         location: normalizedLocation,
@@ -28,23 +45,47 @@ class SOSService {
         type: 'manual',
       });
 
-      // Get user data including trusted contacts
+      // 3. Get emergency contacts from Firestore
       const userDoc = await getDoc(doc(db, 'users', currentUserId));
       const userData = userDoc.data() || {};
-      const safeUserName = userData.name || userData.email || userData.phone || 'Passenger';
+      const contacts = userData.trustedContacts || [];
+      const safeUserName = userData.name || 'A Passenger';
 
-      // Send notifications to trusted contacts
-      if (Array.isArray(userData.trustedContacts) && userData.trustedContacts.length > 0) {
-        await this.notifyTrustedContacts(
-          userData.trustedContacts,
-          safeUserName,
-          normalizedLocation,
-          sosRef.id
-        );
+      // 4. Send SMS to all emergency contacts
+      if (contacts.length > 0) {
+        const phoneNumbers = contacts.map(c => c.phone).filter(Boolean);
+        const message = `🚨 SOS Alert! I need help.\nMy current location:\n${mapUrl || 'Location unavailable'}`;
+
+        if (phoneNumbers.length > 0) {
+          try {
+            // Dynamic require to prevent crash on app load if native module is missing
+            const SMS = require('expo-sms');
+            
+            if (SMS && typeof SMS.isAvailableAsync === 'function') {
+              const isAvailable = await SMS.isAvailableAsync();
+              if (isAvailable) {
+                await SMS.sendSMSAsync(phoneNumbers, message);
+              } else {
+                throw new Error('SMS not available');
+              }
+            } else {
+              throw new Error('ExpoSMS module not found');
+            }
+          } catch (smsError) {
+            console.warn('ExpoSMS fallback:', smsError.message);
+            // Universal fallback using Linking (works on all platforms/emulators)
+            const url = `sms:${phoneNumbers.join(',')}?body=${encodeURIComponent(message)}`;
+            Linking.openURL(url);
+          }
+        }
+
+        // 5. Automatically start a phone call to the first emergency contact
+        if (contacts[0]?.phone) {
+          setTimeout(() => {
+            Linking.openURL(`tel:${contacts[0].phone}`);
+          }, 2000); // Small delay to allow SMS processing
+        }
       }
-
-      // Notify authorities (in real app, this would integrate with emergency services)
-      await this.notifyAuthorities(userData, location);
 
       // Update trip if exists
       if (tripId) {
@@ -61,218 +102,6 @@ class SOSService {
       return sosRef.id;
     } catch (error) {
       console.error('Error triggering SOS:', error);
-      throw error;
-    }
-  }
-
-  async notifyTrustedContacts(contacts, userName, location, sosId) {
-    try {
-      // In a real app, this would send SMS/Email/Push notifications
-      // For demo, we'll create notification records in Firestore
-
-      const mapUrl = location
-        ? `https://maps.google.com/?q=${location.latitude},${location.longitude}`
-        : null;
-      const safeUserName = userName || 'Passenger';
-      const cleanContacts = (contacts || []).filter(
-        (contact) => contact && (contact.name || contact.phone || contact.email)
-      );
-      
-      const notifications = cleanContacts.map((contact) => ({
-        recipientName: contact.name || 'Trusted Contact',
-        recipientPhone: contact.phone || null,
-        recipientEmail: contact.email || null,
-        message: mapUrl
-          ? `🚨 SOS ALERT: ${safeUserName} needs help now. Location: ${location.latitude}, ${location.longitude}. Map: ${mapUrl}`
-          : `🚨 SOS ALERT: ${safeUserName} needs help now. Location unavailable. Please contact immediately.`,
-        type: 'sos',
-        sosId: sosId,
-        timestamp: new Date().toISOString(),
-        status: 'sent',
-      }));
-
-      // Save notifications to Firestore
-      for (const notification of notifications) {
-        await addDoc(collection(db, 'notifications'), notification);
-      }
-
-      // Send push notifications (if tokens available)
-      await this.sendPushNotifications(cleanContacts, safeUserName, location, mapUrl);
-
-      // Email contacts when addresses are available
-      await this.sendEmailNotifications(cleanContacts, safeUserName, location, mapUrl);
-    } catch (error) {
-      console.error('Error notifying trusted contacts:', error);
-    }
-  }
-
-  async sendEmailNotifications(contacts, userName, location, mapUrl) {
-    try {
-      const backendUrl = getBackendUrl();
-      if (!backendUrl) {
-        console.warn('Backend URL missing. Skipping SOS email notifications.');
-        return;
-      }
-
-      const contactsWithEmail = (contacts || []).filter((contact) => contact?.email);
-      if (contactsWithEmail.length === 0) {
-        return;
-      }
-
-      const locationLines = location
-        ? [
-            'Live coordinates attached below:',
-            `Latitude: ${location.latitude}`,
-            `Longitude: ${location.longitude}`,
-            mapUrl ? `Map: ${mapUrl}` : null,
-          ].filter(Boolean)
-        : [
-            'GPS is unavailable right now. Please call or message immediately to confirm safety.',
-            'Share their last known location if you have it.',
-          ];
-
-      await Promise.all(
-        contactsWithEmail.map(async (contact) => {
-          const response = await fetch(`${backendUrl}/alerts/email`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              toEmail: contact.email,
-              subject: `🚨 SOS Alert for ${userName}`,
-              body: [
-                `${userName} has triggered an SOS alert and needs immediate help.`,
-                ...locationLines,
-                'Please respond right away.',
-              ].join('\n'),
-            }),
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.warn(`Failed to send SOS email to ${contact.email}:`, errorText);
-          }
-        })
-      );
-    } catch (error) {
-      console.error('Error sending SOS email notifications:', error);
-    }
-  }
-
-  async sendPushNotifications(contacts, userName, location, mapUrl) {
-    try {
-      for (const contact of contacts) {
-        const tokens = await this.resolveContactTokens(contact);
-        for (const token of tokens) {
-          await NotificationService.sendPushToToken(
-            token,
-            '🚨 SOS ALERT',
-            mapUrl
-              ? `${userName} needs help now. Tap to view location.`
-              : `${userName} needs help now. Location unavailable, contact immediately.`,
-            { type: 'sos', location, userName, mapUrl }
-          );
-        }
-      }
-    } catch (error) {
-      console.error('Error sending push notifications:', error);
-    }
-  }
-
-  async resolveContactTokens(contact) {
-    const tokens = new Set();
-
-    try {
-      if (contact.phone) {
-        const phoneSnap = await getDocs(
-          query(collection(db, 'users'), where('phone', '==', contact.phone))
-        );
-        phoneSnap.docs.forEach((docSnap) => {
-          const data = docSnap.data();
-          if (data?.expoPushToken) tokens.add(data.expoPushToken);
-        });
-      }
-
-      if (contact.email) {
-        const emailSnap = await getDocs(
-          query(collection(db, 'users'), where('email', '==', contact.email))
-        );
-        emailSnap.docs.forEach((docSnap) => {
-          const data = docSnap.data();
-          if (data?.expoPushToken) tokens.add(data.expoPushToken);
-        });
-      }
-    } catch (error) {
-      console.error('Error resolving contact tokens:', error);
-    }
-
-    return Array.from(tokens);
-  }
-
-  async notifyAuthorities(userData, location) {
-    try {
-      const currentUserId = auth.currentUser?.uid;
-      if (!currentUserId) return;
-
-      const safeUserName = userData?.name || userData?.email || userData?.phone || 'Passenger';
-      const normalizedLocation = location
-        ? {
-            latitude: location.latitude ?? location.lat ?? null,
-            longitude: location.longitude ?? location.lng ?? null,
-          }
-        : null;
-
-      // Create authority notification record
-      await addDoc(collection(db, 'authorityAlerts'), {
-        userId: currentUserId,
-        userName: safeUserName,
-        userPhone: userData?.phone || null,
-        location: normalizedLocation,
-        timestamp: new Date().toISOString(),
-        type: 'sos',
-        status: 'pending',
-      });
-
-      // In a real implementation, this would:
-      // 1. Send to police control room API
-      // 2. Trigger emergency dispatch system
-      // 3. Send SMS to local police station
-      
-      console.log('Authorities notified');
-    } catch (error) {
-      console.error('Error notifying authorities:', error);
-    }
-  }
-
-  async autoTriggerSOS(userId, reason, location, tripId) {
-    try {
-      // Automatic SOS triggered by AI/sensors
-      const sosRef = await addDoc(collection(db, 'sosAlerts'), {
-        userId: userId,
-        location: location,
-        timestamp: new Date().toISOString(),
-        status: 'active',
-        tripId: tripId,
-        type: 'automatic',
-        reason: reason, // e.g., "route_deviation", "speed_violation", "long_stop"
-      });
-
-      // Get user data and notify
-      const userDoc = await getDoc(doc(db, 'users', userId));
-      const userData = userDoc.data() || {};
-      const safeUserName = userData.name || userData.email || userData.phone || 'Passenger';
-
-      if (Array.isArray(userData.trustedContacts) && userData.trustedContacts.length > 0) {
-        await this.notifyTrustedContacts(
-          userData.trustedContacts,
-          safeUserName,
-          location,
-          sosRef.id
-        );
-      }
-
-      return sosRef.id;
-    } catch (error) {
-      console.error('Error auto-triggering SOS:', error);
       throw error;
     }
   }

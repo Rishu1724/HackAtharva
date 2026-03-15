@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "backend": "cd backend && ./.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
@@ -15,7 +16,7 @@
     "@react-navigation/native": "^6.1.9",
     "@react-navigation/stack": "^6.3.20",
     "expo": "~54.0.0",
-    "expo-av": "~16.0.8",
+    "expo-audio": "^55.0.8",
     "expo-camera": "~17.0.10",
     "expo-contacts": "~15.0.11",
     "expo-dev-client": "~6.0.20",
@@ -23,8 +24,10 @@
     "expo-localization": "^55.0.8",
     "expo-location": "~19.0.8",
     "expo-notifications": "~0.32.16",
+    "expo-sms": "~14.0.8",
     "expo-status-bar": "~3.0.9",
     "expo-task-manager": "~14.0.9",
+    "expo-video": "^55.0.10",
     "firebase": "^10.8.0",
     "geolib": "^3.3.4",
     "i18next": "^25.8.18",

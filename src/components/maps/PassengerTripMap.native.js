@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { StyleSheet } from 'react-native';
 import MapView, { Marker, Polyline, Circle } from 'react-native-maps';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,7 +10,25 @@ export default function PassengerTripMap({
   routeOptions,
   selectedRouteIndex,
   tripActive,
+  destinationCoords,
 }) {
+  const mapRef = useRef(null);
+
+  useEffect(() => {
+    if (routeOptions?.[selectedRouteIndex]?.length > 0 && mapRef.current) {
+      const coords = routeOptions[selectedRouteIndex];
+      // Include current location and destination in the fit
+      const allCoords = [...coords];
+      if (location) allCoords.push(location);
+      if (destinationCoords) allCoords.push(destinationCoords);
+
+      mapRef.current.fitToCoordinates(allCoords, {
+        edgePadding: { top: 100, right: 50, bottom: 100, left: 50 },
+        animated: true,
+      });
+    }
+  }, [routeOptions, selectedRouteIndex, destinationCoords]);
+
   const region = location
     ? {
         latitude: location.latitude,
@@ -26,6 +44,7 @@ export default function PassengerTripMap({
 
   return (
     <MapView
+      ref={mapRef}
       style={styles.map}
       region={region}
       initialRegion={region}
@@ -50,6 +69,16 @@ export default function PassengerTripMap({
           description="Current vehicle location"
         >
           <MaterialCommunityIcons name="bus" size={40} color="#f44336" />
+        </Marker>
+      )}
+
+      {destinationCoords && (
+        <Marker
+          coordinate={destinationCoords}
+          title="Destination"
+          description="Your destination"
+        >
+          <MaterialCommunityIcons name="map-marker-check" size={40} color="#4CAF50" />
         </Marker>
       )}
 

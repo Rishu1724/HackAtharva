@@ -1,14 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, Alert } from 'react-native';
-import { Text, Card, Button, Divider } from 'react-native-paper';
+import { Text, Card, Button, Divider, Chip } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 
 export default function DriverProfileScreen() {
   const [driverData, setDriverData] = useState(null);
   const [vehicleData, setVehicleData] = useState(null);
+  const [safetyReports, setSafetyReports] = useState([]);
+  const [behaviorStats, setBehaviorStats] = useState({
+    sleeping: 0,
+    distracted: 0,
+    abusive: 0,
+    totalViolations: 0,
+  });
+  const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     totalTrips: 0,
     totalDistance: 0,
@@ -32,8 +40,57 @@ export default function DriverProfileScreen() {
       if (vehicleDoc.exists()) {
         setVehicleData(vehicleDoc.data());
       }
+
+      // Fetch recent safety reports for list
+      const recentReportsQuery = query(
+        collection(db, 'safetyReports'),
+        where('driverId', '==', auth.currentUser.uid),
+        orderBy('timestamp', 'desc'),
+        limit(5)
+      );
+      const recentSnapshot = await getDocs(recentReportsQuery);
+      const recent = recentSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setSafetyReports(recent);
+
+      // Fetch ALL safety reports for stats aggregation
+      const allReportsQuery = query(
+        collection(db, 'safetyReports'),
+        where('driverId', '==', auth.currentUser.uid)
+      );
+      const allSnapshot = await getDocs(allReportsQuery);
+      
+      const counts = {
+        sleeping: 0,
+        distracted: 0,
+        abusive: 0,
+        total: allSnapshot.size
+      };
+
+      allSnapshot.forEach(doc => {
+        const data = doc.data();
+        if (data.type === 'SLEEPING') counts.sleeping++;
+        else if (data.type === 'DISTRACTED') counts.distracted++;
+        else if (data.type === 'ABUSIVE_GESTURE') counts.abusive++;
+      });
+
+      setBehaviorStats({
+        sleeping: counts.sleeping,
+        distracted: counts.distracted,
+        abusive: counts.abusive,
+        totalViolations: counts.total
+      });
+      
+      // Calculate safety score based on total violations
+      const score = Math.max(0, 100 - (counts.total * 5));
+      setStats(prev => ({ ...prev, safetyScore: score }));
+
     } catch (error) {
       console.error('Error fetching driver data:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -165,6 +222,40 @@ export default function DriverProfileScreen() {
         </Card.Content>
       </Card>
 
+      {/* Driver Behavior Detailed Stats */}
+      <Card style={styles.card}>
+        <Card.Content>
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Driver Behavior (Historical)
+          </Text>
+          <View style={styles.behaviorStatsGrid}>
+            <View style={[styles.behaviorStatItem, { borderLeftColor: '#C62828' }]}>
+              <Text variant="labelSmall" style={styles.behaviorStatLabel}>SLEEPING DETECTED</Text>
+              <Text variant="headlineSmall" style={[styles.behaviorStatValue, { color: '#C62828' }]}>
+                {behaviorStats.sleeping}
+              </Text>
+              <Text variant="bodySmall" style={styles.behaviorStatUnit}>Times</Text>
+            </View>
+            
+            <View style={[styles.behaviorStatItem, { borderLeftColor: '#f44336' }]}>
+              <Text variant="labelSmall" style={styles.behaviorStatLabel}>ABUSIVE GESTURES</Text>
+              <Text variant="headlineSmall" style={[styles.behaviorStatValue, { color: '#f44336' }]}>
+                {behaviorStats.abusive}
+              </Text>
+              <Text variant="bodySmall" style={styles.behaviorStatUnit}>Times</Text>
+            </View>
+            
+            <View style={[styles.behaviorStatItem, { borderLeftColor: '#FF9800' }]}>
+              <Text variant="labelSmall" style={styles.behaviorStatLabel}>DISTRACTED DRIVING</Text>
+              <Text variant="headlineSmall" style={[styles.behaviorStatValue, { color: '#FF9800' }]}>
+                {behaviorStats.distracted}
+              </Text>
+              <Text variant="bodySmall" style={styles.behaviorStatUnit}>Times</Text>
+            </View>
+          </View>
+        </Card.Content>
+      </Card>
+
       {/* Safety Score */}
       <Card style={styles.card}>
         <Card.Content>
@@ -172,19 +263,88 @@ export default function DriverProfileScreen() {
             Safety Performance
           </Text>
           <View style={styles.safetyScore}>
-            <MaterialCommunityIcons name="shield-check" size={64} color="#4CAF50" />
+            <MaterialCommunityIcons 
+              name={stats.safetyScore > 80 ? "shield-check" : "shield-alert"} 
+              size={64} 
+              color={stats.safetyScore > 80 ? "#4CAF50" : "#f44336"} 
+            />
             <View style={styles.safetyInfo}>
-              <Text variant="displaySmall" style={styles.scoreValue}>
-                {stats.safetyScore}
+              <Text variant="displaySmall" style={[styles.scoreValue, { color: stats.safetyScore > 80 ? "#4CAF50" : "#f44336" }]}>
+                {stats.safetyScore}%
               </Text>
               <Text variant="bodyMedium" style={styles.scoreLabel}>
                 Safety Score
               </Text>
               <Text variant="bodySmall" style={styles.scoreDesc}>
-                Excellent driving behavior!
+                {stats.safetyScore > 80 ? 'Excellent driving behavior!' : 'Needs improvement in behavior.'}
               </Text>
             </View>
           </View>
+        </Card.Content>
+      </Card>
+
+      {/* Safety Reports */}
+      <Card style={styles.card}>
+        <Card.Content>
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Recent Safety Reports
+          </Text>
+          {safetyReports.length === 0 ? (
+            <View style={styles.emptyState}>
+              <MaterialCommunityIcons name="check-decagram" size={48} color="#4CAF50" />
+              <Text variant="bodyMedium">No safety violations recorded!</Text>
+            </View>
+          ) : (
+            safetyReports.map((report) => (
+              <View key={report.id} style={styles.reportItem}>
+                <View style={styles.reportHeader}>
+                  <Chip 
+                    style={{ backgroundColor: report.type === 'ABUSIVE_GESTURE' ? '#f44336' : '#FF9800' }}
+                    textStyle={{ color: '#fff' }}
+                  >
+                    {report.type}
+                  </Chip>
+                  <Text variant="bodySmall" style={styles.reportTime}>
+                    {new Date(report.timestamp).toLocaleString()}
+                  </Text>
+                </View>
+                <Text variant="bodyMedium" style={styles.reportDetail}>
+                  {report.detail}
+                </Text>
+                <Text variant="bodySmall" style={styles.reportVehicle}>
+                  Vehicle: {report.vehicleNumber}
+                </Text>
+                
+                {/* Granular AI Metrics */}
+                {report.metrics && (
+                  <View style={styles.metricsContainer}>
+                    {report.metrics.eyeAspectRatio !== undefined && (
+                      <Text variant="labelSmall" style={styles.metricText}>
+                        EAR: {report.metrics.eyeAspectRatio} (Th: {report.metrics.eyeThreshold})
+                      </Text>
+                    )}
+                    {report.metrics.isYawning && (
+                      <Text variant="labelSmall" style={[styles.metricText, { color: '#FF9800' }]}>
+                        Yawning Detected
+                      </Text>
+                    )}
+                    {report.metrics.hasMiddleFinger && (
+                      <Text variant="labelSmall" style={[styles.metricText, { color: '#f44336' }]}>
+                        Abusive Gesture
+                      </Text>
+                    )}
+                    {report.metrics.isHeadTurned && (
+                      <Text variant="labelSmall" style={[styles.metricText, { color: '#F57C00' }]}>
+                        Head Turned
+                      </Text>
+                    )}
+                  </View>
+                )}
+                
+                <Divider style={styles.reportDivider} />
+              </View>
+            ))
+          )}
         </Card.Content>
       </Card>
 
@@ -296,6 +456,30 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'center',
   },
+  behaviorStatsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  behaviorStatItem: {
+    flex: 1,
+    paddingLeft: 12,
+    borderLeftWidth: 4,
+    marginRight: 8,
+  },
+  behaviorStatLabel: {
+    fontSize: 9,
+    color: '#666',
+    fontWeight: 'bold',
+  },
+  behaviorStatValue: {
+    fontWeight: 'bold',
+    marginVertical: 2,
+  },
+  behaviorStatUnit: {
+    fontSize: 10,
+    color: '#999',
+  },
   safetyScore: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -325,6 +509,56 @@ const styles = StyleSheet.create({
   },
   logoutButton: {
     margin: 16,
+    marginTop: 8,
     marginBottom: 32,
+  },
+  emptyState: {
+    alignItems: 'center',
+    padding: 20,
+    opacity: 0.6,
+  },
+  reportItem: {
+    marginTop: 12,
+  },
+  reportHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  reportTime: {
+    color: '#666',
+  },
+  reportDetail: {
+    color: '#333',
+    marginBottom: 4,
+  },
+  reportVehicle: {
+    color: '#666',
+    fontStyle: 'italic',
+    marginBottom: 8,
+  },
+  reportDivider: {
+    marginTop: 8,
+  },
+  metricsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+    padding: 8,
+    backgroundColor: '#fff',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#eee',
+  },
+  metricText: {
+    color: '#666',
+    backgroundColor: '#f9f9f9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 0.5,
+    borderColor: '#ddd',
   },
 });

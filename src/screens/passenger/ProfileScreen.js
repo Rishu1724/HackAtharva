@@ -214,6 +214,7 @@ export default function ProfileScreen({ navigation }) {
             mode="outlined"
             icon="history"
             style={styles.actionButton}
+            onPress={() => navigation.navigate('TripHistory')}
           >
             View Trip History
           </Button>

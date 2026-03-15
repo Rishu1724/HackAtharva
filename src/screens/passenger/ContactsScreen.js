@@ -19,7 +19,7 @@ import {
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Contacts from 'expo-contacts';
-import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 
 export default function ContactsScreen() {
@@ -47,17 +47,21 @@ export default function ContactsScreen() {
     }
   };
 
-  const requestContactsPermission = async () => {
+  const importFromContacts = async () => {
     try {
       const { status } = await Contacts.requestPermissionsAsync();
       if (status === 'granted') {
         const { data } = await Contacts.getContactsAsync({
-          fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Emails],
+          fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers],
         });
 
         if (data.length > 0) {
-          // Show contact picker (you can implement a custom picker)
-          Alert.alert('Contacts Access Granted', 'You can now select contacts from your phone.');
+          // In a real app, you'd show a picker. For simplicity, we'll alert instructions.
+          Alert.alert(
+            'Import Contact',
+            'Contact permission granted. Please manually enter the details for now.',
+            [{ text: 'OK' }]
+          );
         }
       }
     } catch (error) {
@@ -66,6 +70,11 @@ export default function ContactsScreen() {
   };
 
   const addContact = async () => {
+    if (trustedContacts.length >= 3) {
+      Alert.alert('Limit Reached', 'You can only save up to 3 emergency contacts.');
+      return;
+    }
+
     if (!newContact.name || !newContact.phone) {
       Alert.alert('Error', 'Please enter at least name and phone number.');
       return;
@@ -73,19 +82,19 @@ export default function ContactsScreen() {
 
     setLoading(true);
     try {
-      const contact = {
-        id: Date.now().toString(),
-        ...newContact,
-      };
+      const updatedContacts = [
+        ...trustedContacts,
+        { id: Date.now().toString(), ...newContact },
+      ];
 
       await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-        trustedContacts: arrayUnion(contact),
+        trustedContacts: updatedContacts,
       });
 
-      setTrustedContacts([...trustedContacts, contact]);
+      setTrustedContacts(updatedContacts);
       setModalVisible(false);
       setNewContact({ name: '', phone: '', email: '' });
-      Alert.alert('Success', 'Trusted contact added successfully!');
+      Alert.alert('Success', 'Emergency contact added successfully!');
     } catch (error) {
       console.error('Error adding contact:', error);
       Alert.alert('Error', 'Failed to add contact.');
@@ -94,31 +103,16 @@ export default function ContactsScreen() {
     }
   };
 
-  const removeContact = async (contact) => {
-    Alert.alert(
-      'Remove Contact',
-      `Remove ${contact.name} from trusted contacts?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-                trustedContacts: arrayRemove(contact),
-              });
-
-              setTrustedContacts(trustedContacts.filter((c) => c.id !== contact.id));
-              Alert.alert('Success', 'Contact removed successfully!');
-            } catch (error) {
-              console.error('Error removing contact:', error);
-              Alert.alert('Error', 'Failed to remove contact.');
-            }
-          },
-        },
-      ]
-    );
+  const removeContact = async (contactId) => {
+    const updatedContacts = trustedContacts.filter((c) => c.id !== contactId);
+    try {
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+        trustedContacts: updatedContacts,
+      });
+      setTrustedContacts(updatedContacts);
+    } catch (error) {
+      console.error('Error removing contact:', error);
+    }
   };
 
   return (
@@ -127,170 +121,79 @@ export default function ContactsScreen() {
         <Card style={styles.infoCard}>
           <Card.Content>
             <View style={styles.infoHeader}>
-              <MaterialCommunityIcons name="shield-account" size={32} color="#6200ee" />
+              <MaterialCommunityIcons name="shield-account" size={32} color="#f44336" />
               <View style={styles.infoTextContainer}>
-                <Text variant="titleMedium">Trusted Contacts</Text>
+                <Text variant="titleMedium">Emergency Contacts</Text>
                 <Text variant="bodySmall" style={styles.infoText}>
-                  These contacts will be notified during emergencies and can track your trips.
+                  Add up to 3 contacts. They will receive your location via SMS when you press SOS.
                 </Text>
               </View>
             </View>
           </Card.Content>
         </Card>
 
-        {trustedContacts.length === 0 ? (
-          <Card style={styles.emptyCard}>
-            <Card.Content>
-              <MaterialCommunityIcons
-                name="account-multiple-plus"
-                size={64}
-                color="#ccc"
-                style={styles.emptyIcon}
-              />
-              <Text variant="titleMedium" style={styles.emptyTitle}>
-                No Trusted Contacts Yet
-              </Text>
-              <Text variant="bodySmall" style={styles.emptyText}>
-                Add contacts who should be notified in case of emergency or when you start a trip.
-              </Text>
-            </Card.Content>
-          </Card>
-        ) : (
-          <Card style={styles.contactsCard}>
-            <Card.Content>
-              <Text variant="titleMedium" style={styles.sectionTitle}>
-                Your Trusted Contacts ({trustedContacts.length})
-              </Text>
-              {trustedContacts.map((contact) => (
-                <List.Item
-                  key={contact.id}
-                  title={contact.name}
-                  description={`${contact.phone}${contact.email ? ' • ' + contact.email : ''}`}
-                  left={(props) => (
-                    <List.Icon {...props} icon="account-circle" color="#6200ee" />
-                  )}
-                  right={(props) => (
-                    <IconButton
-                      icon="delete"
-                      iconColor="#f44336"
-                      onPress={() => removeContact(contact)}
-                    />
-                  )}
-                  style={styles.contactItem}
-                />
-              ))}
-            </Card.Content>
-          </Card>
-        )}
-
-        {/* Safety Features Info */}
-        <Card style={styles.featuresCard}>
+        <Card style={styles.contactsCard}>
           <Card.Content>
             <Text variant="titleMedium" style={styles.sectionTitle}>
-              What They'll Get
+              Saved Contacts ({trustedContacts.length}/3)
             </Text>
-            <View style={styles.featureItem}>
-              <MaterialCommunityIcons name="bell-alert" size={24} color="#6200ee" />
-              <View style={styles.featureText}>
-                <Text variant="bodyMedium">Emergency Alerts</Text>
-                <Text variant="bodySmall" style={styles.featureDesc}>
-                  Instant notification when you trigger SOS
-                </Text>
-              </View>
-            </View>
-            <View style={styles.featureItem}>
-              <MaterialCommunityIcons name="map-marker-path" size={24} color="#6200ee" />
-              <View style={styles.featureText}>
-                <Text variant="bodyMedium">Live Location Tracking</Text>
-                <Text variant="bodySmall" style={styles.featureDesc}>
-                  Real-time tracking when you start a trip
-                </Text>
-              </View>
-            </View>
-            <View style={styles.featureItem}>
-              <MaterialCommunityIcons name="routes" size={24} color="#6200ee" />
-              <View style={styles.featureText}>
-                <Text variant="bodyMedium">Trip Details</Text>
-                <Text variant="bodySmall" style={styles.featureDesc}>
-                  Vehicle info, route, and ETA updates
-                </Text>
-              </View>
-            </View>
+            {trustedContacts.map((contact) => (
+              <List.Item
+                key={contact.id}
+                title={contact.name}
+                description={contact.phone}
+                left={(props) => <List.Icon {...props} icon="account" />}
+                right={(props) => (
+                  <IconButton
+                    icon="delete"
+                    iconColor="#f44336"
+                    onPress={() => removeContact(contact.id)}
+                  />
+                )}
+              />
+            ))}
+            {trustedContacts.length === 0 && (
+              <Text style={styles.emptyText}>No emergency contacts saved.</Text>
+            )}
           </Card.Content>
         </Card>
       </ScrollView>
 
-      <FAB
-        icon="plus"
-        label="Add Contact"
-        style={styles.fab}
-        onPress={() => setModalVisible(true)}
-      />
+      {trustedContacts.length < 3 && (
+        <FAB
+          icon="plus"
+          label="Add Contact"
+          style={styles.fab}
+          onPress={() => setModalVisible(true)}
+        />
+      )}
 
-      {/* Add Contact Modal */}
       <Portal>
         <Modal
           visible={modalVisible}
           onDismiss={() => setModalVisible(false)}
           contentContainerStyle={styles.modal}
         >
-          <Text variant="headlineSmall" style={styles.modalTitle}>
-            Add Trusted Contact
-          </Text>
-
+          <Text variant="headlineSmall" style={styles.modalTitle}>New Emergency Contact</Text>
           <TextInput
-            label="Full Name *"
+            label="Name"
             value={newContact.name}
-            onChangeText={(text) => setNewContact({ ...newContact, name: text })}
-            mode="outlined"
+            onChangeText={(t) => setNewContact({ ...newContact, name: t })}
             style={styles.input}
           />
-
           <TextInput
-            label="Phone Number *"
+            label="Phone"
             value={newContact.phone}
-            onChangeText={(text) => setNewContact({ ...newContact, phone: text })}
-            mode="outlined"
+            onChangeText={(t) => setNewContact({ ...newContact, phone: t })}
             keyboardType="phone-pad"
             style={styles.input}
           />
-
-          <TextInput
-            label="Email (Optional)"
-            value={newContact.email}
-            onChangeText={(text) => setNewContact({ ...newContact, email: text })}
-            mode="outlined"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            style={styles.input}
-          />
-
-          <Button
-            mode="outlined"
-            onPress={requestContactsPermission}
-            style={styles.importButton}
-            icon="contacts"
-          >
-            Import from Contacts
+          <Button mode="outlined" onPress={importFromContacts} style={styles.importBtn}>
+            Import from Phone
           </Button>
-
           <View style={styles.modalButtons}>
-            <Button
-              mode="outlined"
-              onPress={() => setModalVisible(false)}
-              style={styles.modalButton}
-            >
-              Cancel
-            </Button>
-            <Button
-              mode="contained"
-              onPress={addContact}
-              loading={loading}
-              disabled={loading}
-              style={styles.modalButton}
-            >
-              Add Contact
-            </Button>
+            <Button onPress={() => setModalVisible(false)}>Cancel</Button>
+            <Button mode="contained" onPress={addContact} loading={loading}>Save</Button>
           </View>
         </Modal>
       </Portal>
@@ -299,105 +202,19 @@ export default function ContactsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  infoCard: {
-    margin: 16,
-    elevation: 2,
-  },
-  infoHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  infoTextContainer: {
-    flex: 1,
-    marginLeft: 16,
-  },
-  infoText: {
-    marginTop: 4,
-    color: '#666',
-  },
-  emptyCard: {
-    margin: 16,
-    paddingVertical: 32,
-    elevation: 2,
-  },
-  emptyIcon: {
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  emptyTitle: {
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  emptyText: {
-    textAlign: 'center',
-    color: '#666',
-  },
-  contactsCard: {
-    margin: 16,
-    elevation: 2,
-  },
-  sectionTitle: {
-    marginBottom: 16,
-    fontWeight: 'bold',
-  },
-  contactItem: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  featuresCard: {
-    margin: 16,
-    marginBottom: 80,
-    elevation: 2,
-  },
-  featureItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  featureText: {
-    flex: 1,
-    marginLeft: 16,
-  },
-  featureDesc: {
-    color: '#666',
-    marginTop: 2,
-  },
-  fab: {
-    position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#6200ee',
-  },
-  modal: {
-    backgroundColor: 'white',
-    padding: 24,
-    margin: 20,
-    borderRadius: 12,
-  },
-  modalTitle: {
-    marginBottom: 24,
-    fontWeight: 'bold',
-  },
-  input: {
-    marginBottom: 16,
-  },
-  importButton: {
-    marginBottom: 16,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  modalButton: {
-    flex: 1,
-    marginHorizontal: 6,
-  },
+  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  scrollView: { flex: 1 },
+  infoCard: { margin: 16 },
+  infoHeader: { flexDirection: 'row', alignItems: 'center' },
+  infoTextContainer: { flex: 1, marginLeft: 16 },
+  infoText: { color: '#666' },
+  contactsCard: { margin: 16 },
+  sectionTitle: { fontWeight: 'bold', marginBottom: 8 },
+  emptyText: { textAlign: 'center', color: '#999', marginVertical: 20 },
+  fab: { position: 'absolute', margin: 16, right: 0, bottom: 0, backgroundColor: '#f44336' },
+  modal: { backgroundColor: 'white', padding: 24, margin: 20, borderRadius: 12 },
+  modalTitle: { marginBottom: 16, fontWeight: 'bold' },
+  input: { marginBottom: 12 },
+  importBtn: { marginBottom: 16 },
+  modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
 });

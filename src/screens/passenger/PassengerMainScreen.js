@@ -12,8 +12,30 @@ import TripScreen from './TripScreen';
 import ContactsScreen from './ContactsScreen';
 import ProfileScreen from './ProfileScreen';
 import DriverCctvScreen from './DriverCctvScreen';
+import TripHistoryScreen from './TripHistoryScreen';
+import DriverBehaviorScreen from './DriverBehaviorScreen';
+import { createStackNavigator } from '@react-navigation/stack';
 
 const Tab = createBottomTabNavigator();
+const Stack = createStackNavigator();
+
+function HomeStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="HomeMain" component={HomeScreen} />
+      <Stack.Screen name="Behavior" component={DriverBehaviorScreen} options={{ headerShown: true, title: 'Driver Safety Report' }} />
+    </Stack.Navigator>
+  );
+}
+
+function ProfileStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="ProfileMain" component={ProfileScreen} />
+      <Stack.Screen name="TripHistory" component={TripHistoryScreen} options={{ headerShown: true, title: 'Trip History' }} />
+    </Stack.Navigator>
+  );
+}
 
 export default function PassengerMainScreen() {
   const { t } = useTranslation();
@@ -51,7 +73,7 @@ export default function PassengerMainScreen() {
     >
       <Tab.Screen
         name="Home"
-        component={HomeScreen}
+        component={HomeStack}
         options={{ title: t('tabs.passengerHome'), tabBarLabel: t('tabs.passengerHome') }}
       />
       <Tab.Screen
@@ -65,13 +87,8 @@ export default function PassengerMainScreen() {
         options={{ title: t('tabs.passengerCctv'), tabBarLabel: t('tabs.passengerCctv') }}
       />
       <Tab.Screen
-        name="Contacts"
-        component={ContactsScreen}
-        options={{ title: t('tabs.passengerContacts'), tabBarLabel: t('tabs.passengerContacts') }}
-      />
-      <Tab.Screen
         name="Profile"
-        component={ProfileScreen}
+        component={ProfileStack}
         options={{ title: t('tabs.passengerProfile'), tabBarLabel: t('tabs.passengerProfile') }}
       />
     </Tab.Navigator>

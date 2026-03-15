@@ -11,8 +11,9 @@ type CameraOverlayProps = {
 
 const flagColorMap: Record<DriverFlag, string> = {
   NORMAL: '#2E7D32',
-  DROWSY: '#F57C00',
-  DISTRACTED: '#C62828',
+  SLEEPING: '#C62828',
+  DISTRACTED: '#F57C00',
+  ABUSIVE_GESTURE: '#D32F2F',
 };
 
 export default function CameraOverlay({ flag, isStreaming, error }: CameraOverlayProps) {

@@ -32,6 +32,7 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.hackatharva.smarttransport",
+      "usesCleartextTraffic": true,
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
@@ -67,7 +68,7 @@
       ]
     ],
     "extra": {
-      "backendUrl": "http://10.38.160.79:8002",
+      "backendUrl": "http://10.211.125.79:8000",
       "googleMapsApiKey": "AIzaSyDvHYVHJqNEE6Eqf8j3GOsqXe1of5WFGjU",
       "eas": {
         "projectId": "219832f3-3a24-41dc-ab36-e565c9a00d13"

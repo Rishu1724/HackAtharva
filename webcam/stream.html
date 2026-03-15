@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live CCTV Stream</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f7f7f7; margin: 0; padding: 0; }
+    .container { max-width: 400px; margin: 60px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 32px; }
+    h2 { text-align: center; }
+    input, button { width: 100%; padding: 10px; margin: 10px 0; border-radius: 4px; border: 1px solid #ccc; }
+    #videoStream { display: block; margin: 20px auto; max-width: 100%; border: 2px solid #333; border-radius: 6px; }
+    .error { color: #c00; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Live CCTV Stream</h2>
+    <input type="text" id="vehicleId" placeholder="Enter Bus/Cab Number" />
+    <button onclick="startStream()">View Live Video</button>
+    <div id="error" class="error"></div>
+    <img id="videoStream" style="display:none;" />
+  </div>
+  <script>
+    function startStream() {
+      const vehicleId = document.getElementById('vehicleId').value.trim();
+      const errorDiv = document.getElementById('error');
+      const videoStream = document.getElementById('videoStream');
+      if (!vehicleId) {
+        errorDiv.textContent = 'Please enter a bus or cab number.';
+        videoStream.style.display = 'none';
+        return;
+      }
+      errorDiv.textContent = '';
+      videoStream.style.display = 'block';
+      videoStream.src = `/backend/video/stream/${vehicleId}`;
+      videoStream.onerror = function() {
+        errorDiv.textContent = 'No video available for this vehicle.';
+        videoStream.style.display = 'none';
+      };
+    }
+  </script>
+</body>
+</html>

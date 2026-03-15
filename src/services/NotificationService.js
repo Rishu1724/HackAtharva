@@ -34,7 +34,13 @@ class NotificationService {
         Constants.expoConfig?.extra?.projectId;
 
       // Get push token
-      const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+      let token;
+      if (Constants.appOwnership === 'expo') {
+        console.log('Running in Expo Go. Push notifications may have limited support.');
+        token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+      } else {
+        token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+      }
       console.log('Push token:', token);
 
       if (userId) {

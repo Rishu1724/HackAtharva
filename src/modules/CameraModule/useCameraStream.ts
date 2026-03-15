@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
 
-export type DriverFlag = 'DROWSY' | 'DISTRACTED' | 'NORMAL';
+export type DriverFlag = 'SLEEPING' | 'DISTRACTED' | 'NORMAL' | 'ABUSIVE_GESTURE';
 
 type AnalyzeFrameResponse = {
   flag?: DriverFlag;
@@ -10,10 +10,11 @@ type AnalyzeFrameResponse = {
 type UseCameraStreamParams = {
   backendUrl: string;
   driverId: string;
+  vehicleNumber?: string;
   intervalMs?: number;
 };
 
-export function useCameraStream({ backendUrl, driverId, intervalMs = 1000 }: UseCameraStreamParams) {
+export function useCameraStream({ backendUrl, driverId, vehicleNumber, intervalMs = 500 }: UseCameraStreamParams) {
   const cameraRef = useRef<CameraView | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inFlightRef = useRef(false);
@@ -30,6 +31,7 @@ export function useCameraStream({ backendUrl, driverId, intervalMs = 1000 }: Use
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           driverId,
+          vehicleNumber,
           imageBase64: base64Image,
           timestamp: new Date().toISOString(),
         }),

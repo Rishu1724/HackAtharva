@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, StyleSheet, Alert, TouchableOpacity, Platform } from 'react-native';
 import { Text, Button, IconButton } from 'react-native-paper';
 import { CameraView, Camera } from 'expo-camera';
-import { Video } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage, db } from '../config/firebase';
@@ -168,6 +168,11 @@ export default function CameraModal({ visible, onClose, tripId }) {
     );
   }
 
+  const player = useVideoPlayer(recordedVideo, (player) => {
+    player.loop = true;
+    player.play();
+  });
+
   return (
     <View style={styles.container}>
       {!recordedVideo ? (
@@ -236,12 +241,10 @@ export default function CameraModal({ visible, onClose, tripId }) {
         </>
       ) : (
         <View style={styles.previewContainer}>
-          <Video
-            source={{ uri: recordedVideo }}
+          <VideoView
+            player={player}
             style={styles.videoPreview}
-            useNativeControls
-            resizeMode="contain"
-            isLooping
+            contentMode="contain"
           />
           <View style={styles.previewButtons}>
             <Button
